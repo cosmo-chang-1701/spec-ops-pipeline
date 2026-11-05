@@ -14,9 +14,9 @@ and the user chooses to resume. Do not redo steps 0–2.
    (not the gap report; read it only if a finding's wording is needed to decide something).
 3. The preflight `baseline` (the step 0 baseline command on `source_worktree`) must equal
    `baseline` in the state. Check `git rev-parse <default_base>` still equals
-   `default_base_sha` (the `--fetch` preflight already refreshed a remote base). `base_check.fetch_error` or
-   `base_check.error` counts as a mismatch. On any mismatch stop and ask the user — the plan
-   was approved for that code.
+   `default_base_sha` (the `--fetch` preflight already refreshed a remote base).
+   `base_check.fetch_error` or `base_check.error` counts as a mismatch. On any mismatch stop
+   and ask the user — the plan was approved for that code.
 4. `leftovers` (`worktree.sh status`): compare with the task states in `state.json`. Worktrees of the
    current stage that already exist are reused, not re-created; a task recorded as
    `dispatched` or `in-review` has no reachable Worker anymore — re-dispatch it on its
