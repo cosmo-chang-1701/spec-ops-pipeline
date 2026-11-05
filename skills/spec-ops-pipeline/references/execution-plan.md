@@ -71,7 +71,9 @@ Below the matrix, one line on the session plan
 Then one line on the Docker pool (preflight `docker_pool`):
 `Docker pool: free 4 · need 3 · prune: not needed` — `need` is the largest stage's task count;
 `prune` is `ask` when `free` < `need` (this approval then includes `pool --prune`), else
-`not needed`; omit the line when `docker` is false.
+`not needed`. Compare only when `docker` is true and there is no `error`; omit the line when
+`docker` is false; when `docker_pool` has `error` (capacity unknown) write
+`Docker pool: unknown — <error>` and ask no prune consent.
 
 **② Decisions for you** — one bullet each, empty section if none: every H-risk task, every
 rejected H Critic finding (with the reason), every `FAIL-UNRELATED` DoD, every whitelist
@@ -128,7 +130,9 @@ Merge method: `merge_method` (`mergeMethod`, same files, env `SOP_MERGE_METHOD`;
 
 1. **Create** — `worktree.sh create <slug> --base <stage base>` for each task in the stage
    (stage 1: `default_base`, i.e. omit `--base`; stage *n*: `sop-stage/<n-1>`). Run
-   `worktree.sh pool` first and ask for / use the prune consent when `free` < the stage's tasks.
+   `worktree.sh pool` first; only when `docker` is true and no `error`, ask for / use the prune
+   consent when `free` < the stage's tasks. `docker: false` → skip; `error` → tell the user and
+   ask before creating the worktrees.
    Stage 2+: dry-run each task's DoD in its new worktree (through `run_logged.sh`) and update
    the `# baseline:` notes
    per [worker-spec-template.md](worker-spec-template.md#dod-dry-run) before dispatching.

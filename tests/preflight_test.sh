@@ -50,6 +50,15 @@ printf '{"defaultBase":"origin/main"}' >"$WORK/cfg.json"
 out4=$(cd "$repo" && SOP_CONFIG=$WORK/cfg.json PATH="$WORK/nobin:$PATH" bash "$P" --agent claude --fetch 2>/dev/null); rc=$?
 check_eq "--fetch on a remote base exits 0" "$rc" 0
 check_eq "origin/main matches" "$(printf '%s' "$out4" | json_get '["base_check"]["match"]')" True
+check_eq "healthy: no error key" "$(printf '%s' "$out4" | json_get '["base_check"].get("error")')" None
+check_eq "healthy: no fetch_error key" "$(printf '%s' "$out4" | json_get '["base_check"].get("fetch_error")')" None
+printf '{"defaultBase":"no-such-ref"}' >"$WORK/cfg.json"
+out_e=$(cd "$repo" && SOP_CONFIG=$WORK/cfg.json PATH="$WORK/nobin:$PATH" bash "$P" --agent claude 2>/dev/null); rc=$?
+check_eq "unresolvable base exits 0" "$rc" 0
+check_eq "unresolvable base -> match false" "$(printf '%s' "$out_e" | json_get '["base_check"]["match"]')" False
+check_eq "unresolvable base -> error set" "$(printf '%s' "$out_e" | json_get '["base_check"]["error"] != ""')" True
+check_eq "unresolvable base -> no fetch_error" "$(printf '%s' "$out_e" | json_get '["base_check"].get("fetch_error")')" None
+printf '{"defaultBase":"origin/main"}' >"$WORK/cfg.json"
 
 section "--fetch really fetches"
 git -C "$WORK/std.up" commit -q --allow-empty -m three
@@ -58,6 +67,15 @@ out5=$(cd "$repo" && SOP_CONFIG=$WORK/cfg.json PATH="$WORK/nobin:$PATH" bash "$P
 check_eq "no --fetch: base unchanged" "$([[ $(printf '%s' "$out5" | json_get '["base_check"]["base"]') == "$newsha" ]] && echo moved || echo same)" same
 out6=$(cd "$repo" && SOP_CONFIG=$WORK/cfg.json PATH="$WORK/nobin:$PATH" bash "$P" --agent claude --fetch 2>/dev/null)
 check_eq "--fetch: base moved to the upstream commit" "$(printf '%s' "$out6" | json_get '["base_check"]["base"]')" "$newsha"
+
+section "--fetch failure -> fetch_error"
+orig_url=$(git -C "$repo" remote get-url origin)
+git -C "$repo" remote set-url origin "$WORK/no-such-remote.git"
+out_f=$(cd "$repo" && SOP_CONFIG=$WORK/cfg.json PATH="$WORK/nobin:$PATH" bash "$P" --agent claude --fetch 2>/dev/null); rc=$?
+git -C "$repo" remote set-url origin "$orig_url"
+check_eq "failed fetch exits 0" "$rc" 0
+check_eq "failed fetch -> fetch_error set" "$(printf '%s' "$out_f" | json_get '["base_check"].get("fetch_error") is not None')" True
+check_eq "failed fetch -> no error key" "$(printf '%s' "$out_f" | json_get '["base_check"].get("error")')" None
 
 section "failing sub-calls become errors"
 mkdir -p "$WORK/nogit"
