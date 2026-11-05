@@ -295,8 +295,7 @@ git common dir 內，所以永遠不會被當成變更、所有 worktree 共用�
 （PR 的 checks 通過後才合併，絕不使用 `--admin`，合併後會刪除遠端分支）。預設 `["L", "M"]`，
 只有 H 風險的 PR 留給你合併；`[]` 表示全部由你合併，`["L", "M", "H"]` 表示全部自動合併。
 任務還必須在第 1 輪審查就通過、且未升級到較強的 Worker 模型，PR 才會自動合併；`staged` 模式下
-須每個任務都符合，才會合併那個單一 PR。舊的 `autoMerge`（`manual`、`low-risk`、`all`）仍可使用，
-分別視為 `[]`、`["L"]`、`["L", "M", "H"]`。
+須每個任務都符合，才會合併那個單一 PR。
 
 `mergeMethod` 可設為 `squash`（預設）、`merge` 或 `rebase`。核准 checkpoint 時，你可以更改風險
 清單，或只更改單一任務的 Merge 欄位。
@@ -306,6 +305,9 @@ git common dir 內，所以永遠不會被當成變更、所有 worktree 共用�
 fast-forward 到 origin，沒有剩餘任務時封存 run dir。它絕不使用 `--force`：有未 commit 變更的
 worktree 會保留並回報；你的 checkout 有未 commit 的變更或本機 commit 時，會跳過 fast-forward。
 設為 `false`，或在核准 checkpoint 時說「不要清理」，就會改為先詢問你。
+`remove` 也會刪除該 worktree 未使用的 Docker Compose 網路，歸還其位址池名額。建立每個階段的
+worktree 之前，Lead 會先檢查 `worktree.sh pool`；位址池不足時，會在 checkpoint 請你核准
+`worktree.sh pool --prune`（它會移除本機所有專案未使用的 Compose 網路，Compose 會在需要時重建）。
 
 | 環境變數 | 作用 |
 | :--- | :--- |
@@ -332,8 +334,9 @@ worktree 會保留並回報；你的 checkout 有未 commit 的變更或本機 c
 
 | 腳本 | 用途 |
 | :--- | :--- |
+| [`preflight.sh`](skills/spec-ops-pipeline/scripts/preflight.sh) | Lead 一次完成的 preflight：輸出一行 JSON，含執行環境、設定、殘留任務、run dir、PR 就緒狀態、baseline、base 檢查與 Docker 位址池 |
 | [`detect_runtime.sh`](skills/spec-ops-pipeline/scripts/detect_runtime.sh) | 偵測 agent 生態系，並以 JSON 輸出 phase 1 / phase 2 的 Lead 與 Worker 模型 |
-| [`worktree.sh`](skills/spec-ops-pipeline/scripts/worktree.sh) | 感知佈局的 worktree 生命週期管理：`config`、`path`、`create`、`integrate`、`remove`、`list`、`status`、`provision`、`rundir`、`sync` |
+| [`worktree.sh`](skills/spec-ops-pipeline/scripts/worktree.sh) | 感知佈局的 worktree 生命週期管理：`config`、`path`、`create`、`integrate`、`remove`、`list`、`status`、`provision`、`rundir`、`pool`、`sync`；`pool [--prune]` 回報 Docker 位址池剩餘名額與孤立的 Compose 網路，`remove` 也會刪除該 worktree 未使用的 Compose 網路 |
 | [`run_logged.sh`](skills/spec-ops-pipeline/scripts/run_logged.sh) | 執行指令並把輸出寫入 log 檔；只印一行摘要（失敗時附最後幾行），並保留原本的 exit code |
 | [`pr.sh`](skills/spec-ops-pipeline/scripts/pr.sh) | `preflight` / `open` / `merge` / `state`：檢查能否開 PR、push 任務分支並開（或沿用）PR、等 checks 通過後合併、查詢 PR 狀態；輸出一行 JSON |
 | [`check_scope.sh`](skills/spec-ops-pipeline/scripts/check_scope.sh) | 有任何變更檔案超出白名單時回傳失敗；`--list` / `--overlap` 可在撰寫 spec 時列出白名單涵蓋的檔案與白名單之間的重疊 |
@@ -384,6 +387,7 @@ bash tests/check_scope_test.sh
 bash tests/run_logged_test.sh
 bash tests/detect_runtime_test.sh
 bash tests/pr_test.sh
+bash tests/preflight_test.sh
 ```
 
 ## 貢獻

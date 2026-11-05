@@ -15,234 +15,172 @@ description: >-
 
 # Spec Ops Pipeline (Lead-Worker)
 
-`SKILL_DIR` below = the directory containing this file (e.g. `~/.agents/skills/spec-ops-pipeline`).
+`SKILL_DIR` = the directory containing this file.
 
 ## Role boundaries (non-negotiable)
 
 | Role | May | Must not |
 | :--- | :--- | :--- |
-| **Lead** (you) | Read/search code, run tests/linters/builds, write specs, reviews, and run state (in the run dir), create/remove/integrate worktrees via `worktree.sh`; after the user's explicit yes, convert the repo to the bare-repo worktree layout with `migrate_to_bare.sh --apply`; once the user approved it at the checkpoint, commit approved work on `sop/*` branches (in staged mode also between stages), and run `pr.sh open` / `pr.sh merge` to push, open the PR and — per `auto_merge_risk` — merge it; per `auto_cleanup` (or with the user's consent) [clean up](references/execution-plan.md#6a-cleanup) after merged PRs: remove their worktrees and branches, fast-forward `source_worktree` with `worktree.sh sync`, archive the run dir | Edit, create, delete, or move any application file — in the main checkout **or** in a worker worktree (sole exceptions: `migrate_to_bare.sh --apply` as above, and the fast-forward of `worktree.sh sync`); resolve merge conflicts by hand; merge a task that was not APPROVEd, use `--admin`, or otherwise get around branch protection |
-| **Worker** (subagent) | Edit files matched by its whitelist, inside its worktree, until the DoD passes | Touch non-whitelisted files, commit/push, or work outside its worktree |
+| **Lead** (you) | Read/search code, run tests/linters/builds, write specs, reviews and run state (in the run dir), manage worktrees via `worktree.sh`; after the user's explicit yes, run `migrate_to_bare.sh --apply`; once the checkpoint is approved, commit approved work on `sop/*` branches (staged: also between stages) and run `pr.sh open` / `pr.sh merge` (merge per `auto_merge_risk`); per `auto_cleanup` (or with the user's consent) [clean up](references/execution-plan.md#6a-cleanup) after merged PRs | Edit, create, delete, or move any application file — in the main checkout **or** a worker worktree (sole exceptions: `migrate_to_bare.sh --apply` and the fast-forward of `worktree.sh sync`); resolve merge conflicts by hand; merge a task that was not APPROVEd, use `--admin`, or get around branch protection |
+| **Worker** (subagent) | Edit whitelisted files in its worktree until the DoD passes | Touch non-whitelisted files, commit/push, work outside its worktree |
 
-If the Lead is tempted to "just fix it quickly", write it into a spec instead.
+Tempted to "just fix it"? Write a spec.
 
 ## Model assignment
-Run `bash SKILL_DIR/scripts/detect_runtime.sh --agent <claude|gemini|codex>` with **your own
-runtime**. It prints the models for each role: `lead` (phase 1), `lead_phase2`, `worker`,
-`worker_light` (small mechanical L-risk tasks), and `scout` (read-only audit sweeps). The
-read-only Reviewer of a Worker's diff runs on `lead`. Roles,
-defaults, overrides, the Critic's model, and the Worker tier rules:
-[references/models.md](references/models.md). If you are not running as the Lead model of the
-current phase, tell the user how to switch (`/model`, `/effort` in Claude Code); do not
-silently continue — except in a `single`-session run, which keeps the phase 1 Lead model.
+Preflight `runtime` gives the models per role (`lead` = phase 1, `lead_phase2`,
+`worker`, `worker_light`, `scout`); the Reviewer runs on `lead`. Roles, defaults,
+overrides, tiers: [models.md](references/models.md). If you are not on the Lead model of
+the current phase, tell the user how to switch (`/model`, `/effort` in Claude Code); do not
+silently continue — except a `single` run, which keeps the phase 1 Lead model.
 
 ## Sessions and context
-- **Phase 1** — steps 0–2 (preflight, audit, spec, checkpoint) on the phase 1 Lead model.
-- **Phase 2** — steps 3–6. In a `split` run it starts with [Resume](#resume-phase-2) in a
-  **fresh session** on the phase 2 Lead model, reading only the plan, the state, and the
-  current stage's specs — specs are self-contained by design, so nothing else from phase 1
-  is needed. In a `single` run it continues in the same session on the phase 1 Lead model.
+- **Phase 1**: steps 0–2 on the phase 1 Lead model.
+- **Phase 2**: steps 3–6. `split`: starts with [Resume](#resume-phase-2) in a **fresh
+  session** on the phase 2 Lead model, reading only plan, state and the current stage's
+  specs (self-contained). `single`: continues in the same session.
 
-Which one, from `session_split` (`detect_runtime.sh`, env `SOP_SESSION_SPLIT`):
-- `auto` (default) — `split` for a run with any H-risk task, three or more tasks, or
-  `staged` mode, where a fresh session keeps the Lead's context small; `single` for the rest
-  (one or two L/M tasks in `independent` mode).
-- `always` → `split`; `never` → `single`.
+`session_split` (env `SOP_SESSION_SPLIT`): `auto` (default) = `split` for any H-risk task,
+three or more tasks, or `staged` mode, else `single`; `always` → `split`; `never` → `single`.
 
-Show the result in the checkpoint report; an explicit request from the user there wins.
+The checkpoint shows it; the user may override.
 
-Run state lives in the **run dir**, `bash SKILL_DIR/scripts/worktree.sh rundir` →
-`<git common dir>/sop-run/`: outside every work tree (baselines and scope gates never see it),
-shared by all worktrees, and kept across sessions. Never use a session scratchpad for it.
+Run state lives in the **run dir** (`run.run_dir`, `<git common dir>/sop-run/`): outside every
+work tree, shared by all worktrees, kept across sessions. Never use a session scratchpad.
 
 **Command output** — run every lint/test/build/DoD command through
-`bash SKILL_DIR/scripts/run_logged.sh <run dir>/logs/<slug>-<step>-<n>.log '<command>'`.
-It prints one `exit=<rc> lines=<n> log=<path>` line (plus the last 40 lines on failure) and
-exits with the command's code. Read more of the log (with an offset) only when the tail does
-not explain a failure. Never let a full test suite's output into the conversation.
+`bash SKILL_DIR/scripts/run_logged.sh <run dir>/logs/<slug>-<step>-<n>.log '<command>'`
+(prints `exit=<rc> lines=<n> log=<path>` + the last 40 lines on failure). Read more of the
+log only when the tail does not explain a failure. Never put full test output in the chat.
 
 ## Workflow
 
 ### 0. Preflight
-1. `detect_runtime.sh` as above; note the `worker` block and `session_split`.
-2. `bash SKILL_DIR/scripts/worktree.sh config` — the detected layout and its defaults
-   (see [scripts-and-layout.md](references/scripts-and-layout.md#worktree-layout)); no
-   per-repo setup is needed. Note
-   `source_worktree`, `default_base`, `provision`, `max_parallel`, and `offer_bare_migration`.
-   In a bare layout run every Lead git/test command inside `source_worktree` (the container
-   root is not a work tree).
-3. Check `bash SKILL_DIR/scripts/worktree.sh status` for leftover tasks from earlier runs,
-   and `bash SKILL_DIR/scripts/worktree.sh rundir` for a run in progress (`has_state: true`):
-   ask the user whether to [resume](#resume-phase-2) it — or, if its tasks all have PRs
-   waiting for the user, [clean it up](#cleanup-after-the-user-merges) — or archive it
-   (`worktree.sh rundir --archive`) and start over. Note `run_dir`.
-4. If `offer_bare_migration` is `true`: run `bash SKILL_DIR/scripts/migrate_to_bare.sh`
-   (dry run) and ask the user whether to convert to the **bare-repo worktree layout**, in the
-   format of [references/bare-layout.md](references/bare-layout.md). Only on an explicit
-   yes: `migrate_to_bare.sh --apply`, re-run `worktree.sh config`, and re-read the agent docs
-   from the new `source_worktree`. Blocked or declined → continue with the standard layout.
-5. Record the Lead baseline of `source_worktree`:
-   `git status --porcelain=v1 && git diff HEAD | sha256sum` — keep the output (it goes into
-   `state.json` at the checkpoint).
-6. `bash SKILL_DIR/scripts/pr.sh preflight` — can PRs be opened (gh installed and logged in,
-   `origin` set)? Note `ok` and `into`; `ok: false` means the run only commits locally, and
-   the checkpoint says so. Note `auto_merge_risk`, `merge_method` and `auto_cleanup` from
-   `worktree.sh config`
-   ([execution-plan.md](references/execution-plan.md#auto-merge-modes)).
-7. If `default_base` is not `HEAD`: `git fetch` its remote, then check
-   `git rev-parse HEAD` equals `git rev-parse <default_base>`. If not, the audited code
-   differs from what Workers will start from — tell the user and agree on the base first.
+`bash SKILL_DIR/scripts/preflight.sh --agent <claude|gemini|codex> --fetch` (your own runtime;
+`--fetch` updates a remote `default_base` first) prints one JSON line: `runtime` (note `worker`, `session_split`),
+`config` (note `source_worktree`, `default_base`, `provision`, `max_parallel`,
+`auto_merge_risk`, `merge_method`, `auto_cleanup`; [layout](references/scripts-and-layout.md)),
+`leftovers`, `run`, `pr`, `baseline`, `base_check`, `docker_pool`. In a bare layout run Lead git/test
+commands inside `source_worktree`. Act on:
+1. `run.has_state: true` (run in progress): ask the user whether to [resume](#resume-phase-2)
+   it, [clean it up](#cleanup-after-the-user-merges) (if all its tasks have PRs waiting for
+   the user), or archive it (`worktree.sh rundir --archive`) and start over.
+2. `leftovers` (earlier runs' tasks): mention them.
+3. `config.offer_bare_migration: true`: run `bash SKILL_DIR/scripts/migrate_to_bare.sh` (dry
+   run) and ask the user whether to convert to the **bare-repo worktree layout**, in the format
+   of [bare-layout.md](references/bare-layout.md). Only on an explicit yes:
+   `migrate_to_bare.sh --apply`, re-run `preflight.sh`, re-read the agent docs from the new
+   `source_worktree`. Blocked or declined → standard layout.
+4. `pr.ok: false`: the run only commits locally; the checkpoint says so. Note `pr.into`.
+   Merge rules: [execution-plan.md](references/execution-plan.md#auto-merge-modes).
+5. `base_check.match: false`: the audited code differs from what Workers start from; agree on
+   the base with the user first.
+6. `docker_pool.free` < `config.max_parallel`: warn the user (step 3 checks per stage).
+7. `baseline` is the output of the step 0 baseline command
+   `git status --porcelain=v1 && git diff HEAD | sha256sum`, which `preflight.sh` already ran
+   in `source_worktree`. Keep it for `state.json`.
 
 ### 1. Audit (read-only)
-- Establish scope with the user (paths, concern: security / perf / debt / spec gaps).
-- Scan statically — for a large scope, sweep it first with parallel read-only scouts per
-  [references/scout.md](references/scout.md) and verify their leads. Run the project's
-  existing lint/test/type-check commands to get ground truth, each through `run_logged.sh` (logs `audit-<n>.log`). Do not install tools or
-  change config to do so.
-- Produce a **gap report**: numbered findings, each with `file:line`, severity, evidence,
-  and a proposed fix. Group findings into tasks that can each be done by one Worker with
-  a small, non-overlapping whitelist.
-- With more than one task, analyse dependencies and draft the **execution plan** per
-  [references/execution-plan.md](references/execution-plan.md):
-  - no dependencies → `independent`: one Worker per task, all in parallel;
-  - related tasks → `staged`: dependency-ordered stages, parallel within each stage, each
-    stage built on the integrated result of the previous one.
+- Establish scope with the user (paths; security / perf / debt / spec gaps).
+- Scan statically; for a large scope first sweep with parallel read-only scouts
+  ([scout.md](references/scout.md)) and verify their leads. Run the project's existing
+  lint/test/type-check commands for ground truth via `run_logged.sh` (logs `audit-<n>.log`);
+  do not install tools or change config.
+- Produce a **gap report**: numbered findings with `file:line`, severity, evidence, proposed
+  fix. Group them into Worker-sized tasks with small non-overlapping whitelists.
+- With several tasks, draft the **execution plan** per
+  [execution-plan.md](references/execution-plan.md): no dependencies → `independent` (all
+  Workers in parallel); related → `staged` (dependency-ordered stages, parallel within a
+  stage, each built on the previous stage's integrated result).
 
 ### 2. Spec (checkpoint)
-- For each task, fill [references/worker-spec-template.md](references/worker-spec-template.md):
-  slug, goal, context, whitelist, forbidden, DoD commands (and stage/dependencies), and pick
-  its Worker tier (`light` / `standard`, [models.md](references/models.md#worker-tier)).
-  Fill the spec's **Repo rules** from the repo's agent docs (`AGENTS.md`, `CLAUDE.md`, and
-  the ones in directories the whitelist touches): how to run tests/lint/type checks,
-  required flags, language rules. Add pitfalls you know about this repo from your own
-  memory that those docs do not cover, plus any `worker_notes`. Workers cannot see your
-  context or memory, so anything left out is unknown to them. Write DoD commands the way
-  those rules require (working directory, flags, tools).
-- Save the gap report, the execution plan, each spec, and each whitelist to the run dir
-  (never inside a worktree): `gap-report.md`, `plan.md`, `spec-<slug>.md`, `<slug>.wl`.
-- **Overlap check** — per stage: `bash SKILL_DIR/scripts/check_scope.sh --overlap
-  <source_worktree> <slug>.wl...`. An `OVERLAP` means re-split or re-stage; check every
-  `POSSIBLE` by hand.
-- **DoD dry run** — run each DoD command of `independent` / stage-1 tasks in
-  `source_worktree` through `run_logged.sh` (logs `<slug>-dry-<n>.log`), classify it, and
-  note the class in the spec; fix `BROKEN` commands. Stage 2+ tasks are dry-run at step 3. See
-  [worker-spec-template.md](references/worker-spec-template.md#dod-dry-run).
-- **Plan Critic** — with 2+ tasks, `staged` mode, an H-risk task, or on request: dispatch a
-  read-only critic (`lead` model only if a task is H-risk, else `lead_phase2`) and decide
-  on each finding per
-  [references/plan-critic.md](references/plan-critic.md). One round.
-- **Show the checkpoint report to the user and wait for approval** before step 3: decision
-  matrix, decisions for you, execution plan, then gap report and specs, in the format of
-  [execution-plan.md §3](references/execution-plan.md#3-checkpoint-report). In `staged` mode
-  the approval must explicitly cover the inter-stage local commits and merges. For every run
-  it must also cover the automatic commit, push, PR and — per the Merge column — merge after
-  APPROVE, and with `auto_cleanup` the cleanup after each merge (wording in
-  [execution-plan.md §3](references/execution-plan.md#3-checkpoint-report)).
-- **Phase boundary** — after approval, write `<run dir>/state.json`
-  ([execution-plan.md §7](references/execution-plan.md#7-run-state)) with `phase: 2` and the
-  agreed `session`, then:
-  - `split` — end phase 1 by telling the user:
+- For each task fill [worker-spec-template.md](references/worker-spec-template.md) and pick its
+  Worker tier ([models.md](references/models.md#worker-tier)). Fill **Repo rules** from the
+  agent docs (`AGENTS.md`, `CLAUDE.md`, also in directories the whitelist touches): test/lint
+  commands, flags, language rules; add repo pitfalls from your memory and any `worker_notes`.
+  Workers cannot see your context. Write DoD commands as those rules require.
+- Save to the run dir, never a worktree: `gap-report.md`, `plan.md`, `spec-<slug>.md`, `<slug>.wl`.
+- **Overlap check** per stage: `bash SKILL_DIR/scripts/check_scope.sh --overlap
+  <source_worktree> <slug>.wl...`; `OVERLAP` → re-split or re-stage; check each `POSSIBLE` by hand.
+- **DoD dry run**: run each DoD command of `independent` / stage-1 tasks in `source_worktree`
+  through `run_logged.sh` (logs `<slug>-dry-<n>.log`), note its class in the spec, fix `BROKEN`
+  ones ([details](references/worker-spec-template.md#dod-dry-run)); stage 2+ at step 3.
+- **Plan Critic**: with 2+ tasks, `staged` mode, an H-risk task, or on request: a read-only
+  critic (`lead` model only if a task is H-risk, else `lead_phase2`); decide on each
+  finding per [plan-critic.md](references/plan-critic.md). One round.
+- **Show the checkpoint report and wait for approval** before step 3, in the format of
+  [execution-plan.md §3](references/execution-plan.md#3-checkpoint-report). The approval must explicitly cover:
+  in `staged` mode the inter-stage local commits and merges; always the automatic commit,
+  push, PR and — per the Merge column — merge after APPROVE; with `auto_cleanup` the cleanup
+  after each merge; and, when the Docker pool line says `prune: ask`, `worktree.sh pool --prune`. Wording in §3.
+- **Phase boundary**: after approval write `<run dir>/state.json`
+  ([§7](references/execution-plan.md#7-run-state)) with `phase: 2` and the agreed `session`, then:
+  - `split`, tell the user:
     > Plan approved and saved to `<run dir>`. Run `/clear`, switch to the phase 2 Lead
     > (`/model <lead_phase2.model>`, `/effort <lead_phase2.effort>`), then invoke this skill
     > with `resume`.
 
-    (Codex / Antigravity: start a new session with the `lead_phase2` model.)
-  - `single` — tell the user the plan is saved to `<run dir>` and the run continues in this
-    session, then go straight to step 3 without switching models. If the session is lost,
-    `resume` still works from `state.json`.
+    (Codex / Antigravity: start a new session on `lead_phase2`.)
+  - `single`: tell the user the plan is saved to `<run dir>` and the run continues here; go to step 3 without switching models (`resume` still works).
 
 ### Resume (phase 2)
-Entered when the skill is invoked with `resume`, or when preflight finds a run in progress
-and the user chooses to resume. Do not redo steps 0–2.
-1. `detect_runtime.sh` and `worktree.sh config` as in preflight; check you are on the
-   `lead_phase2` model. `worktree.sh rundir` → `run_dir`.
-2. Read `state.json` and `plan.md`, then only the specs and whitelists of `current_stage`
-   (not the gap report; read it only if a finding's wording is needed to decide something).
-3. Re-run the baseline command on `source_worktree`; it must equal `baseline` in the state.
-   Check `git rev-parse <default_base>` still equals `default_base_sha` (`git fetch` first if
-   it is remote). On any mismatch stop and ask the user — the plan was approved for that code.
-4. `worktree.sh status`: compare with the task states in `state.json`. Worktrees of the
-   current stage that already exist are reused, not re-created; a task recorded as
-   `dispatched` or `in-review` has no reachable Worker anymore — re-dispatch it on its
-   `worker_tier` with its spec (plus the open findings, if any) into its existing worktree,
-   telling the new Worker to keep the uncommitted changes already there
-   ([models.md](references/models.md#worker-tier)). A task recorded as `approved` continues
-   with its commit; `committed` (with `pr_enabled`) re-runs `pr.sh open` (it reuses an open PR);
-   `pr-open` with `merge: auto`, no `pr_state` and the merge conditions met re-runs `pr.sh merge`
-   ([execution-plan.md §4a](references/execution-plan.md#4a-after-approve-independent-mode)).
-5. Continue at step 3 for `current_stage`.
-
-Steps 3–5 run **once per stage** (`independent` mode = a single stage), in plan order. Keep
-`state.json` current: update a task's status when it is dispatched, enters a review round,
-is approved or deferred, and the stage when it is integrated.
-
-### 3. Worktree + dispatch
-1. For each task in the stage: `bash SKILL_DIR/scripts/worktree.sh path <slug>` to preview,
-   then `bash SKILL_DIR/scripts/worktree.sh create <slug> [--base <ref>]` (stage 1: omit
-   `--base` to use `default_base`; stage 2+: `--base sop-stage/<n-1>`). The path adapts to
-   the repo (config → existing worktree layout → bare → standard); see the script header.
-   Branch is `sop/<slug>`; the fork point is recorded for later diffs. Files listed under
-   `provision` (gitignored secrets, venvs) are copied/linked in; check `provisioned` in the
-   output and stop if an expected entry is missing. Stage 2+: dry-run each task's DoD in its
-   new worktree through `run_logged.sh` before dispatch (path/flag fixes only; anything
-   else goes back to the user).
-2. Insert the worktree path and base into each spec, then dispatch **all of the stage's
-   Workers in parallel** per [references/dispatch.md](references/dispatch.md), each on the
-   model of its `worker_tier` (`worker` or `worker_light`; concurrency cap = `max_parallel`).
-
-### 4. Gate (per task)
-1. `bash SKILL_DIR/scripts/check_scope.sh <worktree> <whitelist-file>` — must exit 0.
-   On violations: send them back to the Worker to revert (counts as a review round).
-2. Re-run every DoD command yourself inside the worktree through `run_logged.sh` (logs
-   `<slug>-gate-r<round>-<n>.log`). All must exit 0.
-
-### 5. Review (per task) + stage barrier
-Follow [references/review-checklist.md](references/review-checklist.md): the diff is reviewed on
-the `lead` model — in a `split` run by a read-only Reviewer subagent whose findings you verify,
-in a `single` run by you — against the recorded base. Issue APPROVE or REQUEST_CHANGES with
-numbered `file:line` findings, and loop with the Worker at most **3 rounds**, then escalate to
-the user.
-Tasks loop independently of each other. A `light` task that fails round 1 is re-dispatched on
-the `worker` model ([models.md](references/models.md#worker-tier)).
-- `independent`: on APPROVE, commit, push and open the PR with `pr.sh`, and merge it when the
-  [auto-merge rules](references/execution-plan.md#auto-merge-modes) allow — all under the
-  checkpoint approval, with no question
-  ([execution-plan.md §4a](references/execution-plan.md#4a-after-approve-independent-mode)).
-- `staged`: when every task in the stage is APPROVED, commit each locally, run
-  `worktree.sh integrate <n> --base <stage base> sop/<slug>...`, and pass the integration
-  gate (all of the stage's DoD in the stage worktree) before starting the next stage. See
-  execution-plan.md for conflicts, integration failures, and escalated tasks. With more
-  stages to go, set `current_stage` to the next one in `state.json` and go on in the same
-  session. Offer a fresh session (`/clear`, then `resume`) only when this session's context
-  has grown large — e.g. it already ran two stages, or the stage took several review
-  rounds; it is safe here, since no Worker of the stage is active.
-
-### 6. Close-out
-1. Re-run the baseline command from step 0; it must match. If it does not, report exactly
-   what changed in the main checkout — do not "fix" it yourself.
-2. PRs: `independent` PRs already exist (§5); list each task's PR and whether it is `merged`,
-   `open` (with the reason) or local only. For `staged`, open the single PR from the last
-   `sop-stage/<n>` with `pr.sh` (merge per `auto_merge_risk`, see
-   [execution-plan.md §6](references/execution-plan.md#6-close-out)).
-3. [Cleanup](references/execution-plan.md#6a-cleanup) of every merged PR's worktrees and
-   branches, then `worktree.sh sync` on `source_worktree` and, once every task is cleaned,
-   `worktree.sh rundir --archive`. With `auto_cleanup` in the approval this runs with no
-   question; otherwise ask the user first. Never with `--force`.
-4. Final summary: findings addressed, findings deferred (and their blocked dependents),
-   branches/PRs created with their state, what was cleaned up and what is left. If PRs are
-   still open for the user to merge, end with: after merging them, invoke this skill with
-   `cleanup`.
+On `resume`: [entrypoints.md](references/entrypoints.md#resume-phase-2).
 
 ### Cleanup (after the user merges)
-Entered when the skill is invoked with `cleanup`, or when preflight finds a run whose tasks
-all have PRs waiting for the user and the user chooses to clean it up. The invocation is the
-user's consent, whatever `auto_cleanup` says; no model switch is needed.
-1. `worktree.sh config` and `worktree.sh rundir`; read `state.json`.
-2. For each task with status `pr-open` (staged: the run's `final_pr`), run
-   `pr.sh state <pr>`: `MERGED` → status `merged`; `OPEN` / `CLOSED` → report it and leave it.
-3. Run the [cleanup](references/execution-plan.md#6a-cleanup) and report what was cleaned and
-   what is left.
+On `cleanup`: [entrypoints.md](references/entrypoints.md#cleanup-after-the-user-merges).
+
+Steps 3–5 run **once per stage** (`independent` = a single stage), in plan order. Keep
+`state.json` current: update a task's status on dispatch, each review round, approval or
+deferral, and the stage when integrated.
+
+### 3. Worktree + dispatch
+1. Before creating the stage's worktrees: `bash SKILL_DIR/scripts/worktree.sh pool`. If `free`
+   < the stage's task count, run `worktree.sh pool --prune` only if the approval covers it
+   (it removes unused Compose networks of all projects on the machine; Compose recreates
+   them), else ask the user.
+2. For each task: `bash SKILL_DIR/scripts/worktree.sh create <slug> [--base <ref>]` (stage 1:
+   omit `--base`; stage 2+: `--base sop-stage/<n-1>`; `worktree.sh path <slug>` previews).
+   Check `provisioned` in the output; stop if an expected entry is missing. Stage 2+: dry-run each task's DoD in its new worktree through
+   `run_logged.sh` before dispatch (path/flag fixes only; else ask the user).
+3. Insert the worktree path and base into each spec, then dispatch **all of the stage's
+   Workers in parallel** per [dispatch.md](references/dispatch.md), each on the model of its
+   `worker_tier` (`worker` / `worker_light`; cap `max_parallel`).
+
+### 4. Gate (per task)
+1. `bash SKILL_DIR/scripts/check_scope.sh <worktree> <whitelist-file>` must exit 0; on
+   violations the Worker reverts them (counts as a review round).
+2. Re-run every DoD command yourself in the worktree through `run_logged.sh` (logs
+   `<slug>-gate-r<round>-<n>.log`); all must exit 0.
+
+### 5. Review (per task) + stage barrier
+Follow [review-checklist.md](references/review-checklist.md): the diff is reviewed on
+the `lead` model (`split`: read-only Reviewer subagent, you verify its findings; `single`: you) against the recorded base. Issue APPROVE or REQUEST_CHANGES with numbered `file:line`
+findings; loop with the Worker at most **3 rounds**, then escalate to the user.
+Tasks loop independently. A `light` task failing round 1 is re-dispatched on the
+`worker` model ([models.md](references/models.md#worker-tier)).
+- `independent`: on APPROVE, commit, push, open the PR with `pr.sh` and merge it when the
+  [auto-merge rules](references/execution-plan.md#auto-merge-modes) allow, with no question
+  ([§4a](references/execution-plan.md#4a-after-approve-independent-mode)).
+- `staged`: when every task in the stage is APPROVED, commit each locally, run
+  `worktree.sh integrate <n> --base <stage base> sop/<slug>...`, and pass the integration
+  gate (all of the stage's DoD in the stage worktree) before the next stage; conflicts,
+  integration failures and escalations: [execution-plan.md](references/execution-plan.md#4-running-a-stage).
+  With more stages to go, set `current_stage` to the next one in `state.json` and go on in the same session.
+  Offer a fresh session (`/clear`, then `resume`) only when the context has grown large (two
+  stages ran, or many review rounds); it is safe here.
+
+### 6. Close-out
+1. Re-run the step 0 baseline command; it must match, else report exactly what changed in the
+   main checkout — do not "fix" it yourself.
+2. PRs: `independent` PRs already exist (§5); list each as `merged`, `open` (reason) or local
+   only. `staged`: open the single PR from the last `sop-stage/<n>` with `pr.sh` (merge per
+   `auto_merge_risk`, [§6](references/execution-plan.md#6-close-out)).
+3. [Cleanup](references/execution-plan.md#6a-cleanup) of merged PRs' worktrees and branches,
+   `worktree.sh sync`, and — once every task is cleaned — `worktree.sh rundir --archive`.
+   No question only with `auto_cleanup` in the approval, else ask first. Never `--force`.
+4. Final summary: findings addressed, deferred (and blocked dependents), branches/PRs
+   with state, what was cleaned up and what is left. If PRs await the user, end with: after
+   merging them, invoke this skill with `cleanup`.
 
 ## Scripts and layout
-Script usage and exit codes, the worktree paths per layout, provisioning, and config overrides:
-[references/scripts-and-layout.md](references/scripts-and-layout.md).
+Usage, exit codes, worktree paths, provisioning, config overrides:
+[scripts-and-layout.md](references/scripts-and-layout.md).

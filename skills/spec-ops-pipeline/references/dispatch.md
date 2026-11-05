@@ -17,9 +17,7 @@ Use the subagent tool (`Agent` / `Task`), not a shell call:
 - Do **not** set `isolation: "worktree"` — the worktree is already managed by `worktree.sh`.
 
 Dispatch runs in phase 2, so the Lead is the `lead_phase2` model (Sonnet 5.5 / high by
-default). If the current session is on another model, tell the user to switch with `/model`
-(and effort with `/effort`) rather than proceeding silently. Exception: a `single`-session run
-([SKILL.md](../SKILL.md#sessions-and-context)) dispatches from the phase 1 Lead model.
+default); on the wrong model, see [SKILL.md](../SKILL.md#model-assignment).
 
 A Worker's diff is later reviewed by a different, read-only subagent on the `lead` model
 (`lead.dispatch_model`), dispatched by the same phase 2 Lead after the gate; see
@@ -79,5 +77,5 @@ Respect the concurrency cap (`max_parallel`, default 4); dispatch the rest as ea
   `run_logged.sh`. The Worker's report holds exit codes and failure tails only; do not ask
   it for full command output.
 - Mark the task `dispatched` in `state.json` when it starts. A Worker cannot be reached from
-  a later session, so on [resume](../SKILL.md#resume-phase-2) an unfinished task is
+  a later session, so on [resume](entrypoints.md#resume-phase-2) an unfinished task is
   re-dispatched into its existing worktree.
