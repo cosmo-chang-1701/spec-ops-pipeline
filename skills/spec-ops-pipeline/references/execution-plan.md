@@ -68,6 +68,10 @@ Below the matrix, one line on the session plan
 `PRs: open on APPROVE · auto-merge risk L, M (user config) · squash · into main · auto cleanup`
 (`manual cleanup` when `auto_cleanup` is false), or
 `PRs: local commits only — <pr.sh preflight reason>` when `pr.sh preflight` failed.
+Then one line on the Docker pool (preflight `docker_pool`):
+`Docker pool: free 4 · need 3 · prune: not needed` — `need` is the largest stage's task count;
+`prune` is `ask` when `free` < `need` (this approval then includes `pool --prune`), else
+`not needed`; omit the line when `docker` is false.
 
 **② Decisions for you** — one bullet each, empty section if none: every H-risk task, every
 rejected H Critic finding (with the reason), every `FAIL-UNRELATED` DoD, every whitelist
@@ -93,10 +97,13 @@ ask the user to approve it:
   configured method, and deleting the remote head branch;
 - with `auto_cleanup`: at close-out, the [cleanup](#6a-cleanup) of every merged PR — removing
   its task (and stage) worktrees and local branches, fast-forwarding `source_worktree`'s branch
-  to origin, and archiving the run dir once every task is cleaned.
+  to origin, and archiving the run dir once every task is cleaned;
+- only when the line says `prune: ask`: `worktree.sh pool --prune` before creating a stage's
+  worktrees. It removes the unused Compose networks of **every** project on the machine
+  (Compose recreates them on demand); without this consent the Lead asks again at step 3.
 
 The user may narrow it (change the risk list, change one task to `manual`, "no PRs": commit
-locally only, or "no cleanup"). Without `auto_cleanup` (or after "no cleanup") the cleanup keeps
+locally only, "no cleanup", or "no prune"). Without `auto_cleanup` (or after "no cleanup") the cleanup keeps
 its own consent at close-out. Record the approval in `state.json` (§7) so a phase 2 session can rely on it.
 
 ### Auto-merge modes
@@ -114,14 +121,14 @@ The Lead merges a task's PR only when **all** hold:
 - it was not escalated to the `worker` model.
 
 Merge method: `merge_method` (`mergeMethod`, same files, env `SOP_MERGE_METHOD`; default
-`squash`). The deprecated `autoMerge` / `SOP_AUTO_MERGE` (`manual`, `low-risk`, `all`) still
-map to `[]`, `["L"]`, `["L", "M", "H"]`.
+`squash`).
 
 ## 4. Running a stage
 `independent` mode is a single stage without steps 4–6.
 
 1. **Create** — `worktree.sh create <slug> --base <stage base>` for each task in the stage
-   (stage 1: `default_base`, i.e. omit `--base`; stage *n*: `sop-stage/<n-1>`).
+   (stage 1: `default_base`, i.e. omit `--base`; stage *n*: `sop-stage/<n-1>`). Run
+   `worktree.sh pool` first and ask for / use the prune consent when `free` < the stage's tasks.
    Stage 2+: dry-run each task's DoD in its new worktree (through `run_logged.sh`) and update
    the `# baseline:` notes
    per [worker-spec-template.md](worker-spec-template.md#dod-dry-run) before dispatching.
@@ -205,7 +212,9 @@ fast-forward moves `source_worktree`'s HEAD). Log each script call through `run_
    "unmerged"; a stage branch built only from merges is deleted anyway. `remove` refuses a
    worktree with uncommitted changes: leave it and report it. It first runs
    `docker compose down` (volumes kept) for Compose projects started only from inside that
-   worktree; one shared with another checkout is left running.
+   worktree; one shared with another checkout is left running. It then deletes the worktree's
+   unused Compose networks (the default project of its directory and the projects it stopped),
+   returning their slots to the Docker address pool.
 3. **Sync** — if any PR was merged: `worktree.sh sync` fast-forwards `source_worktree`'s branch
    to its upstream. Exit 1 (`synced: false`) means nothing changed; report its `reason`
    (uncommitted changes, local commits not on origin, detached HEAD, failed fetch).
@@ -231,6 +240,7 @@ It records facts only — decisions stay in `plan.md` and the specs.
   "auto_merge_risk": ["L", "M"],
   "merge_method": "squash",
   "auto_cleanup": true,
+  "docker_prune": false,
   "pr_enabled": true,
   "pr_into": "main",
   "mode": "staged",
@@ -265,5 +275,7 @@ It records facts only — decisions stay in `plan.md` and the specs.
 - `auto_cleanup` is `false` if the user said "no cleanup" at the checkpoint, whatever the
   config says. `final_pr` / `final_pr_state` are the `staged` run's single PR and its last
   non-success `pr.sh` result (`null` in `independent` mode).
+- `docker_prune` is `true` only when the checkpoint line said `prune: ask` and the user
+  approved without "no prune"; otherwise `false` (the Lead asks when the pool turns out short).
 - `approval` quotes what the user approved at the checkpoint; a resumed Lead never assumes
   more than it says.

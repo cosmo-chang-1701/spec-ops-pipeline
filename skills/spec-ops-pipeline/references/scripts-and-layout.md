@@ -5,8 +5,9 @@ Script paths are relative to the skill directory (`SKILL_DIR` in SKILL.md).
 ## Scripts
 | Script | Purpose | Exit codes |
 | :--- | :--- | :--- |
+| `scripts/preflight.sh --agent X [--fetch]` | The Lead's one-call preflight (SKILL.md step 0): one compact JSON line with `runtime` (`detect_runtime.sh`), `config`, `leftovers` (`worktree.sh status`), `run` (`rundir`), `pr` (`pr.sh preflight`), `baseline` (the step 0 baseline command in `source_worktree`), `base_check` (`default_base` vs `HEAD`) and `docker_pool` (`worktree.sh pool`); a failing part becomes `{"error":…}`; `--fetch` fetches `default_base`'s remote first | 0 printed, 2 usage |
 | `scripts/detect_runtime.sh [--agent X]` | Ecosystem + model JSON | 0 ok, 2 usage |
-| `scripts/worktree.sh config\|path\|create\|integrate\|remove\|list\|status\|provision\|rundir\|sync` | Layout-aware worktree lifecycle with auto-provisioning; `integrate` builds a stage's `sop-stage/<n>` branch; `status` adds state, base, ahead count and change counts per task/stage; `rundir [--archive]` creates (or archives) the persistent run dir; `remove` runs `docker compose down` for the worktree's own Compose projects first (`SOP_COMPOSE_DOWN=0` disables), and with `--pr-merged` also deletes a branch whose PR was squash- or rebase-merged; `sync` fast-forwards `source_worktree`'s branch to its upstream (JSON) | 0 ok, 1 merge conflict (`integrate`), dirty/missing (`status --check`) or skipped (`sync`, nothing changed), 2 error |
+| `scripts/worktree.sh config\|path\|create\|integrate\|remove\|list\|status\|provision\|rundir\|pool\|sync` | Layout-aware worktree lifecycle with auto-provisioning; `integrate` builds a stage's `sop-stage/<n>` branch; `status` adds state, base, ahead count and change counts per task/stage; `rundir [--archive]` creates (or archives) the persistent run dir; `remove` runs `docker compose down` for the worktree's own Compose projects first (`SOP_COMPOSE_DOWN=0` disables) and then removes the Compose networks left without containers (the worktree directory's default project and the projects it stopped), and with `--pr-merged` also deletes a branch whose PR was squash- or rebase-merged; `pool [--prune]` reports Docker address-pool capacity (JSON: total/used/free slots, orphaned Compose networks; `--prune` removes the orphans; read-only otherwise; `{"docker":false,...}` without a daemon); `sync` fast-forwards `source_worktree`'s branch to its upstream (JSON) | 0 ok, 1 merge conflict (`integrate`), dirty/missing (`status --check`) or skipped (`sync`, nothing changed), 2 error (incl. unknown `pool` argument; `pool` exits 0 even without docker) |
 | `scripts/pr.sh preflight\|open\|merge\|state` | Opens an approved task's PR (push, `gh pr create`, reusing an open one) and merges it after its checks pass; `state` reports a PR's `OPEN` / `MERGED` / `CLOSED`; one JSON line on stdout. `preflight` = can PRs be opened at all. Never uses `--admin` | 0 ok, 1 not done (JSON says why), 2 usage |
 | `scripts/run_logged.sh <log> '<command>'` | Runs a command with its output in a log file; prints a one-line summary (plus the tail on failure) | the command's exit code, 2 usage |
 | `scripts/check_scope.sh <wt> <whitelist> [--base ref]` | Whitelist gate on all changes | 0 ok, 1 violations, 2 usage |
@@ -18,7 +19,7 @@ The script tests live in the source repository's `tests/` directory, not in the 
 
 ## Worktree layout
 Detected automatically; nothing to configure per repo. A standard repo can be converted to
-the bare layout in place (preflight step 4, [bare-layout.md](bare-layout.md)).
+the bare layout in place (preflight step 3, [bare-layout.md](bare-layout.md)).
 
 | | Bare container (`<root>/.bare` + `<root>/main/`) | Standard repo (`.git` in the checkout) |
 | :--- | :--- | :--- |

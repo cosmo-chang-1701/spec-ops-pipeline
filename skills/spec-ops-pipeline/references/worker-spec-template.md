@@ -29,11 +29,16 @@ write, or run commands in any worktree but your own.
 - Format and lint only with the versions the repo pins (e.g. `pre-commit run <hook> --files
   <files you changed>`), never with another locally installed formatter, and never over the
   whole tree — a different version rewrites unrelated files.
-- Docker Compose derives its project name from the directory name, which is the same in
-  every worktree (e.g. `app/`), so all worktrees share one set of images, volumes, and
-  networks. Use only `docker compose run --rm ...`; never `build`, `up`, or `down` (the
-  Lead's `worktree.sh remove` stops what `run` leaves behind). If the DoD needs a rebuilt
-  image (Dockerfile or dependency changes), stop and report.
+- Docker Compose derives its project name from the directory holding the compose file,
+  unless a top-level `name:` or `COMPOSE_PROJECT_NAME` (possibly in a provisioned `.env`)
+  sets it. A subdirectory name (e.g. `app/`) is shared by all worktrees, so they share one
+  set of images, volumes, and networks; a compose file at the worktree root gives each
+  worktree its own containers and networks, taken from a shared, limited Docker address
+  pool. Use only `docker compose run --rm ...`; never `build`, `up`, or `down`, and never
+  create Docker networks yourself. (The Lead's `worktree.sh remove` stops what `run` leaves
+  behind and reclaims the default-named and found projects' networks; `worktree.sh pool
+  --prune` is the fallback for overridden names.) If the DoD needs a rebuilt image
+  (Dockerfile or dependency changes), stop and report.
 
 ## Goal
 <One or two sentences: the outcome, not the steps.>
