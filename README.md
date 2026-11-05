@@ -321,8 +321,7 @@ Lead then merges (after the PR's checks pass, never with `--admin`, deleting the
 afterwards). The default, `["L", "M"]`, leaves only H-risk PRs to you; `[]` leaves all of them,
 `["L", "M", "H"]` none. A PR is merged only if its task was also approved in review round 1 and
 not escalated to the stronger Worker model; in `staged` mode the single PR is merged only if
-every task qualifies. The older `autoMerge` (`manual`, `low-risk`, `all`) is still read as
-`[]`, `["L"]` and `["L", "M", "H"]`.
+every task qualifies.
 
 `mergeMethod` is `squash` (default), `merge` or `rebase`. You can change the list, or a single
 task's Merge value, when you approve the checkpoint.
@@ -333,6 +332,10 @@ the task and stage worktrees and their local branches (also squash- or rebase-me
 run dir when nothing is left. It never uses `--force`: a worktree with uncommitted changes is
 kept and reported, and the fast-forward is skipped if your checkout has uncommitted changes or
 local commits. Set it to `false`, or say "no cleanup" at the checkpoint, to be asked instead.
+`remove` also deletes the worktree's unused Docker Compose networks, so their address-pool slots
+are returned. Before creating a stage's worktrees the Lead checks `worktree.sh pool` and, when
+the pool is short, asks you to approve `worktree.sh pool --prune` at the checkpoint (it removes
+the unused Compose networks of every project on the machine; Compose recreates them on demand).
 
 | Environment variable | Effect |
 | :--- | :--- |
@@ -359,8 +362,9 @@ All scripts can also be used on their own.
 
 | Script | Purpose |
 | :--- | :--- |
+| [`preflight.sh`](skills/spec-ops-pipeline/scripts/preflight.sh) | The Lead's one-call preflight: prints one JSON line with the runtime, config, leftovers, run dir, PR readiness, baseline, base check and Docker pool |
 | [`detect_runtime.sh`](skills/spec-ops-pipeline/scripts/detect_runtime.sh) | Detect the agent ecosystem and print the phase 1 / phase 2 Lead and Worker models as JSON |
-| [`worktree.sh`](skills/spec-ops-pipeline/scripts/worktree.sh) | Layout-aware worktree lifecycle: `config`, `path`, `create`, `integrate`, `remove`, `list`, `status`, `provision`, `rundir`, `sync` |
+| [`worktree.sh`](skills/spec-ops-pipeline/scripts/worktree.sh) | Layout-aware worktree lifecycle: `config`, `path`, `create`, `integrate`, `remove`, `list`, `status`, `provision`, `rundir`, `pool`, `sync`; `pool [--prune]` reports free Docker address-pool slots and orphaned Compose networks, and `remove` also deletes the worktree's unused Compose networks |
 | [`run_logged.sh`](skills/spec-ops-pipeline/scripts/run_logged.sh) | Run a command with its output in a log file; print a one-line summary (plus the tail on failure) and keep the exit code |
 | [`pr.sh`](skills/spec-ops-pipeline/scripts/pr.sh) | `preflight` / `open` / `merge` / `state`: check that PRs can be opened, push a task branch and open (or reuse) its PR, wait for checks and merge it, report a PR's state; prints one JSON line |
 | [`check_scope.sh`](skills/spec-ops-pipeline/scripts/check_scope.sh) | Fail if any changed file falls outside the whitelist; `--list` / `--overlap` show a whitelist's files and overlaps between whitelists at spec time |
@@ -412,6 +416,7 @@ bash tests/check_scope_test.sh
 bash tests/run_logged_test.sh
 bash tests/detect_runtime_test.sh
 bash tests/pr_test.sh
+bash tests/preflight_test.sh
 ```
 
 ## Contributing

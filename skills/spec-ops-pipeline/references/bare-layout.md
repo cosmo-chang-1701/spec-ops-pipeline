@@ -27,7 +27,7 @@ therefore loads the **default branch's** config, and whatever it writes there (e
 loads that worktree's own config.
 
 ## When to offer it
-Preflight, after `worktree.sh config` and `worktree.sh status`: when the config shows
+Preflight, from the `preflight.sh` output: when `config` shows
 `"offer_bare_migration": true` (standard layout, not disabled), run the dry run from
 anywhere inside the repo:
 
@@ -108,7 +108,7 @@ continue with the standard layout.
    load the `<branch>` config through the `root_links` symlinks (sessions in another
    worktree load that worktree's), and that `bash SKILL_DIR/scripts/wt.sh` manages their own
    worktrees (`add`, `remove`, `status`, `link-config`).
-5. Continue the preflight (baseline, `default_base` check). Unpushed commits on the default
+5. Re-run `preflight.sh` (new `source_worktree`, baseline, `base_check`). Unpushed commits on the default
    branch now show up as `HEAD` ≠ `default_base` there — agree on the base with the user.
 
 ## What the conversion does

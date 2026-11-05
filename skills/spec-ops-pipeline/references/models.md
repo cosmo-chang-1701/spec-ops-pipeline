@@ -16,6 +16,7 @@ heuristics — e.g. a Claude Code session may also have `GEMINI_API_KEY` set).
 | Reviewer | Read-only review of a Worker's diff ([review-checklist.md](review-checklist.md#reviewer-subagent)) | `lead` | `lead` | `lead` |
 | Plan Critic | [plan-critic.md](plan-critic.md) | `lead` if any task is H-risk, else `lead_phase2` | same rule | same rule |
 
+Switching to the Lead model of the current phase: [SKILL.md](../SKILL.md#model-assignment).
 Unknown ecosystems fall back to the Claude column. Each block also has `dispatch_model`, the
 value to pass to the runtime's dispatch call (`opus`, `sonnet`, `haiku` in Claude Code). A
 `single`-session run needs no Reviewer subagent: the Lead already runs on `lead`.
@@ -23,11 +24,6 @@ value to pass to the runtime's dispatch call (`opus`, `sonnet`, `haiku` in Claud
 Overrides: `SOP_LEAD_MODEL`, `SOP_LEAD_EFFORT`, `SOP_LEAD2_MODEL`, `SOP_LEAD2_EFFORT`,
 `SOP_WORKER_MODEL`, `SOP_WORKER_EFFORT`, `SOP_WORKER_LIGHT_MODEL`, `SOP_WORKER_LIGHT_EFFORT`,
 `SOP_SCOUT_MODEL`, `SOP_SCOUT_EFFORT`. Setting a model also sets its `dispatch_model`.
-
-## Lead model per phase
-If you are not running as the Lead model of the current phase, tell the user how to switch
-(`/model`, `/effort` in Claude Code); do not silently continue. Exception: a `single`-session
-run ([SKILL.md](../SKILL.md#sessions-and-context)) keeps the phase 1 Lead model for phase 2.
 
 ## Worker tier
 Decide each task's tier at step 2 and show it in the decision matrix's **Worker** column
@@ -47,7 +43,7 @@ set `worker_tier` to `standard` and re-dispatch it on the `worker` model. A Work
 non-whitelisted file is a spec problem, not a model one: handle it per the review checklist
 (ask the user before widening the whitelist) without escalating. The re-dispatch is a new
 dispatch (not a message to the old Worker, which keeps its model) with the full spec plus the
-`open_findings`, into the same worktree — as on [resume](../SKILL.md#resume-phase-2). Add a
+`open_findings`, into the same worktree — as on [resume](entrypoints.md#resume-phase-2). Add a
 section above the spec's Repo rules telling the new Worker that the worktree already holds the
 earlier round's uncommitted changes, to keep them, and to fix only the numbered findings.
 Rounds keep counting; escalation does not reset them.
