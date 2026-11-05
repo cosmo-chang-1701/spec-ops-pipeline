@@ -43,16 +43,11 @@ echo '{"mergeMethod": "ff"}' >"$cfgfile"
 (cd "$std" && bash "$W" config >/dev/null 2>&1); rc=$?
 check_eq "invalid mergeMethod in the config: exit 2" "$rc" 2
 
-section "config: deprecated autoMerge"
-echo '{"autoMerge": "low-risk"}' >"$cfgfile"
-check_eq "autoMerge low-risk = L" "$(cfg_get '["auto_merge_risk"]')" "['L']"
-check_eq "SOP_AUTO_MERGE=all = L, M, H" "$(risk_get SOP_AUTO_MERGE=all)" "['L', 'M', 'H']"
-check_eq "SOP_AUTO_MERGE_RISK wins over SOP_AUTO_MERGE" \
-  "$(risk_get SOP_AUTO_MERGE=all SOP_AUTO_MERGE_RISK=none)" "[]"
-echo '{"autoMerge": "manual", "autoMergeRisk": ["M"]}' >"$cfgfile"
-check_eq "autoMergeRisk wins over autoMerge" "$(cfg_get '["auto_merge_risk"]')" "['M']"
+section "config: autoMerge ignored"
+echo '{"autoMerge": "all"}' >"$cfgfile"
+check_eq "autoMerge key ignored" "$(cfg_get '["auto_merge_risk"]')" "['L', 'M']"
 (cd "$std" && SOP_AUTO_MERGE=bogus bash "$W" config >/dev/null 2>&1); rc=$?
-check_eq "invalid SOP_AUTO_MERGE: exit 2" "$rc" 2
+check_eq "SOP_AUTO_MERGE ignored" "$rc" 0
 
 section "config: autoCleanup"
 check_eq "autoCleanup defaults to true" "$(cfg_get '["auto_cleanup"]')" True
@@ -81,7 +76,7 @@ echo '{"offerBareLayout": false, "autoMergeRisk": ["L", "M", "H"]}' >"$cfgfile"
 check_eq "repo config wins over the user config" "$(cfg_get '["auto_merge_risk"]')" "['L', 'M', 'H']"
 check_eq "other user keys still apply" "$(cfg_get '["merge_method"]')" merge
 echo '{"offerBareLayout": false, "autoMerge": "manual"}' >"$cfgfile"
-check_eq "repo autoMerge wins over user autoMergeRisk" "$(cfg_get '["auto_merge_risk"]')" "[]"
+check_eq "legacy repo autoMerge ignored; user autoMergeRisk applies" "$(cfg_get '["auto_merge_risk"]')" "['L']"
 echo '{"mergeMethod": "ff"}' >"$userfile"
 err=$(cd "$std" && bash "$W" config 2>&1 >/dev/null)
 check "invalid value names the user config" grep -qF "$userfile" <<<"$err"

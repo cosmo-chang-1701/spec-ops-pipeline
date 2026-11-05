@@ -49,15 +49,13 @@
 #   autoMergeRisk (risk levels whose PRs the Lead merges once open and APPROVEd, a subset of
 #   ["L", "M", "H"], default ["L", "M"]; env SOP_AUTO_MERGE_RISK="L,M" or "none"),
 #   mergeMethod ("squash" | "merge" | "rebase", default "squash"; env SOP_MERGE_METHOD).
-#   Deprecated: autoMerge / SOP_AUTO_MERGE ("manual" = none, "low-risk" = L, "all" = L,M,H),
-#   used only where autoMergeRisk / SOP_AUTO_MERGE_RISK is not set.
 #   autoCleanup (default true; env SOP_AUTO_CLEANUP=1|0): after a PR is merged the Lead removes
 #   its worktrees and branches, fast-forwards the source worktree and archives the run dir.
 #
 # User config — defaults for every repo, overridden key by key by the repo config:
 #   SOP_USER_CONFIG env, else ${XDG_CONFIG_HOME:-~/.config}/spec-ops-pipeline/config.json.
 #   Only the repo-independent keys are read from it: maxParallel, workerNotes,
-#   offerBareLayout, autoMergeRisk (or autoMerge), mergeMethod, autoCleanup.
+#   offerBareLayout, autoMergeRisk, mergeMethod, autoCleanup.
 #
 # Target root resolution (first hit wins):
 #   1. SOP_WORKTREE_ROOT env, or "worktreeRoot" in the repo config
@@ -468,15 +466,14 @@ cmd_config() {
     "$SOURCE_WORKTREE" "$ROOT_DIR" "$RESOLVED_BY" "$PATH_STYLE" "$DEFAULT_BRANCH" \
     "$DEFAULT_BASE" "$BRANCH_PREFIX" "$STAGE_PREFIX" "$PROVISION_FROM" "$COPY_MODE" \
     "$(printf '%s\n' "${COPIES[@]}")" "$(printf '%s\n' "${LINKS[@]}")" \
-    "$user_config" "${SOP_AUTO_MERGE_RISK:-}" "${SOP_AUTO_MERGE:-}" "${SOP_MERGE_METHOD:-}" \
+    "$user_config" "${SOP_AUTO_MERGE_RISK:-}" "${SOP_MERGE_METHOD:-}" \
     "${SOP_AUTO_CLEANUP:-}" <<'PY'
 import json, sys
 (config, layout, repo, anchor, main_wt, source, root, resolved_by, path_style,
  default_branch, default_base, branch_prefix, stage_prefix, provision_from, copy_mode,
- copies, links, user_config, env_auto_merge_risk, env_auto_merge,
- env_merge_method, env_auto_cleanup) = sys.argv[1:23]
+ copies, links, user_config, env_auto_merge_risk,
+ env_merge_method, env_auto_cleanup) = sys.argv[1:22]
 RISKS = ("L", "M", "H")
-LEGACY_AUTO_MERGE = {"manual": [], "low-risk": ["L"], "all": list(RISKS)}
 USER_KEYS = ("maxParallel", "workerNotes", "offerBareLayout", "autoMergeRisk", "mergeMethod",
              "autoCleanup")
 
@@ -484,16 +481,8 @@ def fail(message):
     print(f"worktree: {message}", file=sys.stderr)
     sys.exit(2)
 
-def legacy_auto_merge(value, where):
-    if value not in LEGACY_AUTO_MERGE:
-        fail(f"autoMerge must be one of: {' '.join(LEGACY_AUTO_MERGE)} (got '{value}' from {where})")
-    return LEGACY_AUTO_MERGE[value]
-
 def load(path):
-    layer = json.load(open(path)) if path else {}
-    if "autoMerge" in layer and "autoMergeRisk" not in layer:
-        layer["autoMergeRisk"] = legacy_auto_merge(layer["autoMerge"], f"autoMerge in {path}")
-    return layer
+    return json.load(open(path)) if path else {}
 
 # The repo config wins key by key; the user config only fills in USER_KEYS.
 data, origin = load(config), {}
@@ -514,8 +503,6 @@ def risk_levels():
         where = "env SOP_AUTO_MERGE_RISK"
         value = [] if env_auto_merge_risk == "none" else \
             [r.strip() for r in env_auto_merge_risk.split(",") if r.strip()]
-    elif env_auto_merge:
-        return legacy_auto_merge(env_auto_merge, "env SOP_AUTO_MERGE")
     elif "autoMergeRisk" in data:
         where, value = f"autoMergeRisk in {origin['autoMergeRisk']}", data["autoMergeRisk"]
     else:
