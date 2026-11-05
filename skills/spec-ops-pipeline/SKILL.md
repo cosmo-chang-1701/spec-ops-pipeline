@@ -72,8 +72,7 @@ commands inside `source_worktree`. Act on:
    `source_worktree`. Blocked or declined → standard layout.
 4. `pr.ok: false`: the run only commits locally; the checkpoint says so. Note `pr.into`.
    Merge rules: [execution-plan.md](references/execution-plan.md#auto-merge-modes).
-5. `base_check.match: false`, `fetch_error` or `error`: agree
-   on the base with the user first.
+5. `base_check.match: false`, `fetch_error` or `error`: agree on the base with the user first.
 6. `docker_pool.error`: tell the user capacity is unknown; else `docker: false`: skip; else
    `free` < `config.max_parallel`: warn (step 3 re-checks).
 7. `baseline` = output of `git status --porcelain=v1 && git diff HEAD | sha256sum`, already
@@ -139,8 +138,9 @@ deferral, and the stage when integrated.
    projects' unused Compose networks; they are recreated), else ask the user.
 2. For each task: `bash SKILL_DIR/scripts/worktree.sh create <slug> [--base <ref>]` (stage 1:
    omit `--base`; stage 2+: `--base sop-stage/<n-1>`; `worktree.sh path <slug>` previews).
-   Check `provisioned` in the output; stop if an expected entry is missing. Stage 2+: dry-run each task's DoD in its new worktree
-   through `run_logged.sh` before dispatch (path/flag fixes only; else ask).
+   Check `provisioned` in the output; stop if an expected entry is missing. Stage 2+: dry-run
+   each task's DoD in its new worktree through `run_logged.sh` before dispatch (path/flag
+   fixes only; else ask).
 3. Insert the worktree path and base into each spec, then dispatch **all of the stage's
    Workers in parallel** per [dispatch.md](references/dispatch.md), each on the model of its
    `worker_tier` (`worker` / `worker_light`; cap `max_parallel`).
