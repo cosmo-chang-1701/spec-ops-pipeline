@@ -257,14 +257,57 @@ section "remove: docker compose down"
 mkdir -p "$WORK/dockershim"
 cat >"$WORK/dockershim/docker" <<'SH'
 #!/usr/bin/env bash
+# State files: DOCKER_ROWS (ps rows "project<TAB>working_dir"), DOCKER_NETS (JSON array of
+# networks: Name, Labels, IPAM), DOCKER_NETC ("network<TAB>container id" attachments),
+# DOCKER_POOLS (JSON for `info`, absent = null). DOCKER_INFO_RC / DOCKER_NETRM_RC force failures.
 printf '%s|%s\n' "$PWD" "$*" >>"$DOCKER_LOG"
+proj="" net="" quiet=0 fmt=0
+for a in "$@"; do
+  case $a in
+    label=com.docker.compose.project=*) proj=${a#label=com.docker.compose.project=} ;;
+    network=*) net=${a#network=} ;;
+    -q) quiet=1 ;;
+    --format) fmt=1 ;;
+  esac
+done
 case $1 in
-  ps) cat "$DOCKER_ROWS" ;;
-  compose) exit "${DOCKER_DOWN_RC:-0}" ;;
+  ps)
+    if [[ -n $net ]]; then awk -F'\t' -v n="$net" '$1 == n { print $2 }' "$DOCKER_NETC" 2>/dev/null
+    elif [[ -n $proj ]]; then awk -F'\t' -v p="$proj" '$1 == p { print "cid" NR }' "$DOCKER_ROWS" 2>/dev/null
+    else cat "$DOCKER_ROWS" 2>/dev/null
+    fi
+    exit 0 ;;
+  info)
+    [[ ${DOCKER_INFO_RC:-0} -eq 0 ]] || exit "$DOCKER_INFO_RC"
+    cat "$DOCKER_POOLS" 2>/dev/null || echo null ;;
+  network)
+    case $2 in
+      ls)
+        python3 -c 'import json,sys
+proj = sys.argv[1]
+for n in json.load(open(sys.argv[2])):
+    if not proj or (n.get("Labels") or {}).get("com.docker.compose.project") == proj:
+        print(n["Name"])' "$proj" "$DOCKER_NETS" ;;
+      inspect) cat "$DOCKER_NETS" ;;
+      rm)
+        [[ ${DOCKER_NETRM_RC:-0} -eq 0 ]] || exit "$DOCKER_NETRM_RC"
+        python3 -c 'import json,sys
+f = sys.argv[2]
+d = [n for n in json.load(open(f)) if n["Name"] != sys.argv[1]]
+json.dump(d, open(f, "w"))' "$3" "$DOCKER_NETS" ;;
+    esac ;;
+  compose)
+    rc=${DOCKER_DOWN_RC:-0}
+    if [[ $rc -eq 0 && $2 == -p ]]; then   # a successful down removes the project's containers
+      awk -F'\t' -v p="$3" '$1 != p' "$DOCKER_ROWS" >"$DOCKER_ROWS.tmp" && mv "$DOCKER_ROWS.tmp" "$DOCKER_ROWS"
+    fi
+    exit "$rc" ;;
 esac
 SH
 chmod +x "$WORK/dockershim/docker"
 export DOCKER_LOG=$WORK/docker.log DOCKER_ROWS=$WORK/docker.rows
+export DOCKER_NETS=$WORK/docker.nets DOCKER_NETC=$WORK/docker.netc DOCKER_POOLS=$WORK/docker.pools
+echo '[]' >"$DOCKER_NETS"
 dremove() { (cd "$repo" && PATH="$WORK/dockershim:$PATH" bash "$W" remove "$@"); }
 new_task() { (cd "$repo" && bash "$W" create "$1" 2>/dev/null | json_get '["worktree_path"]'); }
 
@@ -305,5 +348,139 @@ DOCKER_DOWN_RC=1 dremove compose-dirty --force >/dev/null 2>&1; rc=$?
 check_eq "failed down does not block remove" "$rc" 0
 check "failed down: down was attempted" grep -q '|compose -p dirty down' "$DOCKER_LOG"
 check "failed down: worktree removed" test ! -e "$t"
+
+section "remove: reclaim networks"
+# net_json <name> <project|-> [subnet]  ->  one network object
+net_json() {
+  python3 -c 'import json,sys
+n, p, s = sys.argv[1:4]
+o = {"Name": n, "Labels": {"com.docker.compose.project": p} if p != "-" else {},
+     "IPAM": {"Config": [{"Subnet": s}] if s else None}}
+print(json.dumps(o))' "$1" "$2" "${3:-}"
+}
+set_nets() { local IFS=,; echo "[$*]" >"$DOCKER_NETS"; }
+net_exists() { grep -q "\"Name\": \"$1\"" "$DOCKER_NETS"; }
+rm_count() { grep -c '|network rm' "$DOCKER_LOG" || true; }
+: >"$DOCKER_NETC"
+
+# Root-level compose file: project name is the worktree dir name; `run --rm` left only a network.
+t=$(new_task reclaim-own)
+: >"$DOCKER_ROWS"
+set_nets "$(net_json reclaim-own_default reclaim-own 172.20.0.0/16)" "$(net_json unrelated_default unrelated 172.21.0.0/16)"
+: >"$DOCKER_LOG"
+err=$(dremove reclaim-own 2>&1 >/dev/null)
+check "reclaim: own network removed" test ! -e "$t" -a "$(rm_count)" -eq 1
+check "reclaim: own network gone from daemon" bash -c "! grep -q reclaim-own_default '$DOCKER_NETS'"
+check "reclaim: message printed" grep -qxF "removed network: reclaim-own_default" <<<"$err"
+check "reclaim: other project's network kept" grep -q unrelated_default "$DOCKER_NETS"
+
+# A project with a container elsewhere keeps its networks.
+t=$(new_task reclaim-shared)
+printf 'reclaim-shared\t%s/main\n' "$repo" >"$DOCKER_ROWS"
+set_nets "$(net_json reclaim-shared_default reclaim-shared 172.20.0.0/16)"
+: >"$DOCKER_LOG"
+dremove reclaim-shared >/dev/null 2>&1
+check "reclaim: project with a container elsewhere kept" test "$(rm_count)" -eq 0
+check "reclaim: shared network still present" grep -q reclaim-shared_default "$DOCKER_NETS"
+
+# A stopped non-compose container is still attached.
+t=$(new_task reclaim-stopped)
+: >"$DOCKER_ROWS"
+set_nets "$(net_json reclaim-stopped_default reclaim-stopped 172.20.0.0/16)"
+printf 'reclaim-stopped_default\tabc123\n' >"$DOCKER_NETC"
+: >"$DOCKER_LOG"
+dremove reclaim-stopped >/dev/null 2>&1
+check "reclaim: network with a stopped non-compose container kept" test "$(rm_count)" -eq 0
+: >"$DOCKER_NETC"
+
+# SOP_COMPOSE_DOWN=0 disables the reclaim too.
+t=$(new_task reclaim-off)
+: >"$DOCKER_ROWS"
+set_nets "$(net_json reclaim-off_default reclaim-off 172.20.0.0/16)"
+: >"$DOCKER_LOG"
+SOP_COMPOSE_DOWN=0 dremove reclaim-off >/dev/null 2>&1
+check "reclaim: SOP_COMPOSE_DOWN=0 no network rm" test "$(rm_count)" -eq 0
+
+# A project compose_down just stopped (named differently from the directory) is reclaimed too.
+t=$(new_task reclaim-named)
+printf 'custom\t%s\n' "$t" >"$DOCKER_ROWS"
+set_nets "$(net_json custom_default custom 172.20.0.0/16)"
+: >"$DOCKER_LOG"
+dremove reclaim-named >/dev/null 2>&1
+check "reclaim: stopped project's network removed" bash -c "! grep -q custom_default '$DOCKER_NETS'"
+
+# A failed rm is only a warning.
+t=$(new_task reclaim-fail)
+: >"$DOCKER_ROWS"
+set_nets "$(net_json reclaim-fail_default reclaim-fail 172.20.0.0/16)"
+DOCKER_NETRM_RC=1 dremove reclaim-fail >/dev/null 2>&1; rc=$?
+check_eq "reclaim: failed network rm is not fatal" "$rc" 0
+check "reclaim: worktree removed despite failed rm" test ! -e "$t"
+
+# Directory-name normalisation: stage worktrees are named _stage-<id> -> project stage-<id>.
+t=$(cd "$std" && bash "$W" create reclaim-stagebr 2>/dev/null | json_get '["worktree_path"]')
+git -C "$t" commit --allow-empty -qm x
+(cd "$std" && bash "$W" integrate 9 --base HEAD sop/reclaim-stagebr >/dev/null 2>&1)
+set_nets "$(net_json stage-9_default stage-9 172.20.0.0/16)"
+: >"$DOCKER_ROWS"; : >"$DOCKER_LOG"
+(cd "$std" && PATH="$WORK/dockershim:$PATH" bash "$W" remove --stage 9 >/dev/null 2>&1)
+check "reclaim: _stage-9 maps to project stage-9" bash -c "! grep -q stage-9_default '$DOCKER_NETS'"
+(cd "$std" && PATH="$WORK/dockershim:$PATH" bash "$W" remove reclaim-stagebr --force >/dev/null 2>&1)
+
+section "pool"
+pool() { (cd "$repo" && PATH="$WORK/dockershim:$PATH" bash "$W" pool "$@"); }
+pjson() { python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(eval(sys.argv[1], {"d": d})))' "$1"; }
+: >"$DOCKER_ROWS"; : >"$DOCKER_NETC"; rm -f "$DOCKER_POOLS"
+
+set_nets "$(net_json bridge - 172.17.0.0/16)" "$(net_json host - '')" "$(net_json none - '')" \
+  "$(net_json v6only - 'fd00::/64')"
+out=$(pool); rc=$?
+check_eq "pool: exit 0" "$rc" 0
+check_eq "pool: default pools total 31" "$(pjson 'd["total"]' <<<"$out")" 31
+check_eq "pool: default pools source" "$(pjson 'd["pools_from"]' <<<"$out")" '"default"'
+check_eq "pool: null IPAM ignored (bridge only, v6 ignored)" "$(pjson 'd["used"]' <<<"$out")" 1
+check_eq "pool: free = total - used" "$(pjson 'd["free"]' <<<"$out")" 30
+
+# A /20 inside 192.168.0.0/16 uses one slot; a /12 inside 172.16/12 covers 15 slots (172.17-31).
+set_nets "$(net_json a - 192.168.16.0/24)" "$(net_json b - 192.168.16.128/25)" "$(net_json c - 172.16.0.0/12)"
+out=$(pool)
+check_eq "pool: overlapping subnets counted per slot" "$(pjson 'd["used"]' <<<"$out")" 16
+
+# Daemon pools: 10.0.0.0/8 at /24 = 65536 slots plus 172.30.0.0/16 at /24 = 256.
+echo '[{"Base":"10.0.0.0/8","Size":24},{"Base":"172.30.0.0/16","Size":24}]' >"$DOCKER_POOLS"
+set_nets "$(net_json a - 10.1.2.0/24)" "$(net_json b - 10.1.2.0/23)" "$(net_json c - 172.30.5.0/25)"
+out=$(pool)
+check_eq "pool: daemon pools" "$(pjson '[d["pools_from"], d["total"], d["used"], d["free"]]' <<<"$out")" '["daemon", 65792, 3, 65789]'
+rm -f "$DOCKER_POOLS"
+
+# Orphans and prune.
+set_nets "$(net_json bridge - 172.17.0.0/16)" \
+  "$(net_json orph_default orph 172.20.0.0/16)" \
+  "$(net_json live_default live 172.21.0.0/16)" \
+  "$(net_json held_default held 172.22.0.0/16)" \
+  "$(net_json attached_default att 172.23.0.0/16)" \
+  "$(net_json plain - 172.24.0.0/16)"
+printf 'live\t/somewhere\n' >"$DOCKER_ROWS"
+printf 'attached_default\tdeadbeef\n' >"$DOCKER_NETC"
+: >"$DOCKER_LOG"
+out=$(pool)
+check_eq "pool: orphans sorted, only truly unused" "$(pjson 'd["orphans"]' <<<"$out")" '["held_default", "orph_default"]'
+check_eq "pool: no prune: pruned empty" "$(pjson 'd["pruned"]' <<<"$out")" '[]'
+check_eq "pool: read-only without --prune" "$(rm_count)" 0
+out=$(pool --prune 2>/dev/null)
+check_eq "pool: prune removes only orphans" "$(pjson '[d["pruned"], d["used"]]' <<<"$out")" '[["held_default", "orph_default"], 4]'
+check "pool: live, attached and unlabelled kept" bash -c "grep -q live_default '$DOCKER_NETS' && grep -q attached_default '$DOCKER_NETS' && grep -q '\"plain\"' '$DOCKER_NETS'"
+
+# Unreachable daemon and absent docker.
+out=$(DOCKER_INFO_RC=1 pool); rc=$?
+check_eq "pool: daemon unreachable" "$rc $(pjson '[d["docker"]]' <<<"$out")" '0 [false]'
+nobin=$WORK/nodocker; mkdir -p "$nobin"
+for c in git bash python3 awk sed sort grep cat dirname basename readlink mkdir env tr head cut uname date rm cp ls id wc mktemp find xargs mv sleep tail printf sha1sum; do
+  command -v "$c" >/dev/null && ln -sf "$(command -v "$c")" "$nobin/$c"
+done
+out=$(cd "$repo" && PATH="$nobin" bash "$W" pool); rc=$?
+check_eq "pool: docker absent" "$rc $(pjson '[d["docker"]]' <<<"$out")" '0 [false]'
+(pool --bogus >/dev/null 2>&1); rc=$?
+check_eq "pool: bad argument exit 2" "$rc" 2
 
 finish
