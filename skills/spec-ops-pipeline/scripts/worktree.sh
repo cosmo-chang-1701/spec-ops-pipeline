@@ -85,7 +85,10 @@
 # "free":3,"orphans":[...],"pruned":[...]}. Orphans are Compose networks whose project has no
 # container in any state and with no container attached. `free` is an upper bound: Docker
 # also skips slots that overlap host routes or VPN interfaces. Without docker or a reachable
-# daemon: {"docker":false,"reason":"..."}, still exit 0.
+# daemon: {"docker":false,"reason":"..."}, still exit 0. When Docker data cannot be read or
+# parsed (network ls/inspect fails or is not a JSON list, no valid default-address-pools entry)
+# it prints {"docker":true,"error":"...","pruned":[...]} instead, no counts, still exit 0;
+# `pruned` lists networks already removed in this call.
 set -euo pipefail
 
 readonly BRANCH_PREFIX=${SOP_BRANCH_PREFIX:-sop/}
@@ -795,29 +798,71 @@ def default_pools():
     pools = [("172.%d.0.0/16" % i, 16) for i in range(17, 32)]
     return pools + [("192.168.0.0/16", 20)]
 
+pruned = []
+
+def fail(msg):
+    print(json.dumps({"docker": True, "error": msg, "pruned": pruned}, separators=(",", ":")))
+    sys.exit(0)
+
+def docker_error(step, r):
+    lines = (r.stderr or "").strip().splitlines()
+    return "docker %s failed: %s" % (step, lines[0].strip()) if lines else "docker %s failed" % step
+
+def valid_pool(p):
+    if not isinstance(p, dict):
+        return None
+    base = p.get("Base", p.get("base"))
+    size = p.get("Size", p.get("size"))
+    if not isinstance(base, str) or not isinstance(size, int) or isinstance(size, bool):
+        return None
+    try:
+        net = ipaddress.ip_network(base, strict=False)
+    except ValueError:
+        return None
+    if net.version != 4 or size < net.prefixlen or size > 32:
+        return None
+    return (base, size)
+
 def load_pools():
     r = docker("info", "--format", "{{json .DefaultAddressPools}}")
     try:
         data = json.loads(r.stdout.strip() or "null")
     except ValueError:
         data = None
+    if data is None or data == []:
+        return default_pools(), "default"
     pools = []
-    for p in data or []:
-        base = p.get("Base") or p.get("base")
-        size = p.get("Size", p.get("size"))
-        if base and size is not None:
-            pools.append((base, int(size)))
-    return (pools, "daemon") if pools else (default_pools(), "default")
+    for p in data if isinstance(data, list) else []:
+        v = valid_pool(p)
+        if v:
+            pools.append(v)
+        else:
+            try:
+                shown = json.dumps(p)
+            except (TypeError, ValueError):
+                shown = repr(p)
+            print("worktree: ignoring invalid default-address-pools entry: " + shown, file=sys.stderr)
+    if not pools:
+        fail("no valid default-address-pools entry")
+    return pools, "daemon"
 
 def inspect_networks():
-    ids = docker("network", "ls", "-q").stdout.split()
+    r = docker("network", "ls", "-q")
+    if r.returncode != 0:
+        fail(docker_error("network ls", r))
+    ids = r.stdout.split()
     if not ids:
         return []
     r = docker("network", "inspect", *ids)
+    if r.returncode != 0:
+        fail(docker_error("network inspect", r))
     try:
-        return json.loads(r.stdout or "[]") or []
+        nets = json.loads(r.stdout)
     except ValueError:
-        return []
+        nets = None
+    if not isinstance(nets, list) or not all(isinstance(n, dict) for n in nets):
+        fail("docker network inspect failed: output is not a JSON list of networks")
+    return nets
 
 def subnets(nets):
     out = []
@@ -836,8 +881,6 @@ def capacity(pools, subs):
     total = used = 0
     for base_s, size in pools:
         base = ipaddress.ip_network(base_s, strict=False)
-        if base.version != 4 or size < base.prefixlen or size > 32:
-            continue
         total += 2 ** (size - base.prefixlen)
         shift = 32 - size
         b0, b1 = int(base.network_address), int(base.broadcast_address)
@@ -877,23 +920,28 @@ def find_orphans(nets):
         orphans.append(name)
     return sorted(set(orphans))
 
-pools, source = load_pools()
-nets = inspect_networks()
-orphans = find_orphans(nets)
-pruned = []
-if prune:
-    for name in orphans:
-        if docker("network", "rm", name).returncode == 0:
-            pruned.append(name)
-            print("removed network: " + name, file=sys.stderr)
-        else:
-            print("worktree: docker network rm failed for '%s'; continuing" % name, file=sys.stderr)
-    if pruned:
-        nets = inspect_networks()
-total, used = capacity(pools, subnets(nets))
-print(json.dumps({"docker": True, "pools_from": source, "total": total, "used": used,
-                  "free": total - used, "orphans": orphans, "pruned": pruned},
-                 separators=(",", ":")))
+def main():
+    pools, source = load_pools()
+    nets = inspect_networks()
+    orphans = find_orphans(nets)
+    if prune:
+        for name in orphans:
+            if docker("network", "rm", name).returncode == 0:
+                pruned.append(name)
+                print("removed network: " + name, file=sys.stderr)
+            else:
+                print("worktree: docker network rm failed for '%s'; continuing" % name, file=sys.stderr)
+        if pruned:
+            nets = inspect_networks()
+    total, used = capacity(pools, subnets(nets))
+    print(json.dumps({"docker": True, "pools_from": source, "total": total, "used": used,
+                      "free": total - used, "orphans": orphans, "pruned": pruned},
+                     separators=(",", ":")))
+
+try:
+    main()
+except Exception as e:  # never leak a traceback: unreadable docker data is reported as JSON
+    fail("unexpected docker data: %s" % e)
 PY
 }
 
@@ -928,13 +976,20 @@ cmd_sync() {
 }
 
 usage() {
-  # Prints the header comment up to the first non-comment line; $1 = max lines (0 = all).
-  awk -v max="${1:-0}" 'NR == 1 { next } !/^#/ { exit } { sub(/^# ?/, ""); print; if (max && NR > max) exit }' "$0"
+  # Prints the header comment (up to the first non-comment line); with "block" only the
+  # `Usage:` block (up to the first bare `#` line after it).
+  awk -v mode="${1:-full}" '
+    NR == 1 { next }
+    !/^#/ { exit }
+    { line = $0; sub(/^# ?/, "", line) }
+    mode == "block" && !on { if (line ~ /^Usage:/) on = 1; else next }
+    mode == "block" && $0 == "#" { exit }
+    { print line }' "$0"
 }
 
 main() {
   local cmd=${1:-}
-  [[ -n $cmd ]] || { usage 21 >&2; exit 2; }
+  [[ -n $cmd ]] || { usage block >&2; exit 2; }
   shift
   case $cmd in
     -h|--help) usage; exit 0 ;;

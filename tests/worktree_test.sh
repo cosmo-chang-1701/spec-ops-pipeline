@@ -278,14 +278,20 @@ case $1 in
   network)
     case $2 in
       ls)
+        [[ ${DOCKER_NETLS_RC:-0} -eq 0 ]] || { echo "ls boom" >&2; exit "$DOCKER_NETLS_RC"; }
         python3 -c 'import json,sys
 proj = sys.argv[1]
 for n in json.load(open(sys.argv[2])):
     if not proj or (n.get("Labels") or {}).get("com.docker.compose.project") == proj:
         print(n["Name"])' "$proj" "$DOCKER_NETS" ;;
-      inspect) cat "$DOCKER_NETS" ;;
+      inspect)
+        if [[ ${DOCKER_NETINSPECT_RC:-0} -ne 0 || ( -e $DOCKER_NETS.rmd && -n ${DOCKER_INSPECT_RC_AFTER_RM:-} ) ]]; then
+          echo "inspect boom" >&2; exit "${DOCKER_NETINSPECT_RC:-$DOCKER_INSPECT_RC_AFTER_RM}"
+        fi
+        if [[ -n ${DOCKER_INSPECT_RAW:-} ]]; then printf '%s\n' "$DOCKER_INSPECT_RAW"; else cat "$DOCKER_NETS"; fi ;;
       rm)
         [[ ${DOCKER_NETRM_RC:-0} -eq 0 ]] || exit "$DOCKER_NETRM_RC"
+        : >"$DOCKER_NETS.rmd"
         python3 -c 'import json,sys
 f = sys.argv[2]
 d = [n for n in json.load(open(f)) if n["Name"] != sys.argv[1]]
@@ -477,5 +483,53 @@ out=$(cd "$repo" && PATH="$nobin" bash "$W" pool); rc=$?
 check_eq "pool: docker absent" "$rc $(pjson '[d["docker"]]' <<<"$out")" '0 [false]'
 (pool --bogus >/dev/null 2>&1); rc=$?
 check_eq "pool: bad argument exit 2" "$rc" 2
+
+# Unreadable or invalid Docker data -> error form (exit 0, no counts, no traceback).
+perr() { pool "$@" 2>"$WORK/pool.err"; }
+no_tb() { ! grep -q Traceback "$WORK/pool.err"; }
+set_nets "$(net_json bridge - 172.17.0.0/16)"
+out=$(DOCKER_NETLS_RC=1 perr); rc=$?
+check_eq "pool: ls fails -> error form" "$rc $(pjson '[d["docker"], d["error"], d["pruned"], "total" in d]' <<<"$out")" '0 [true, "docker network ls failed: ls boom", [], false]'
+out=$(DOCKER_NETINSPECT_RC=1 perr); rc=$?
+check_eq "pool: inspect fails -> error form" "$rc $(pjson '[d["error"], sorted(d)]' <<<"$out")" '0 ["docker network inspect failed: inspect boom", ["docker", "error", "pruned"]]'
+for raw in 'not json' '{"a":1}' '[1]'; do
+  out=$(DOCKER_INSPECT_RAW=$raw perr); rc=$?
+  check_eq "pool: inspect output '$raw' -> error form" "$rc $(pjson '["error" in d, "used" in d]' <<<"$out")" '0 [true, false]'
+  check "pool: inspect output '$raw': no traceback" no_tb
+done
+# Pool validation.
+set_nets "$(net_json n1 - 10.1.0.0/24)"
+echo '[{"Base":"bogus","Size":24},{"Base":"10.0.0.0/8","Size":24},{"Base":"10.0.0.0/8","Size":"x"},"x",{"Base":"10.0.0.0/16","Size":8}]' >"$DOCKER_POOLS"
+out=$(perr); rc=$?
+check_eq "pool: invalid entries skipped" "$rc $(pjson '[d["pools_from"], d["total"], d["used"]]' <<<"$out")" '0 ["daemon", 65536, 1]'
+check_eq "pool: one stderr line per invalid entry" "$(grep -c 'ignoring invalid default-address-pools entry' "$WORK/pool.err")" 4
+check "pool: invalid entries: no traceback" no_tb
+for raw in '[{"Base":"bogus","Size":24}]' '["10.0.0.0/8"]' '{"Base":"10.0.0.0/8"}' '[{"Base":"fd00::/8","Size":64}]' '5'; do
+  echo "$raw" >"$DOCKER_POOLS"
+  : >"$DOCKER_LOG"
+  out=$(perr --prune); rc=$?
+  check_eq "pool: no valid pool '$raw' -> error" "$rc $(pjson '[d["error"], d["pruned"], "total" in d]' <<<"$out")" '0 ["no valid default-address-pools entry", [], false]'
+  check "pool: no valid pool '$raw': no traceback, nothing pruned" bash -c "[[ \$(grep -c '|network rm' '$DOCKER_LOG' || true) == 0 ]] && ! grep -q Traceback '$WORK/pool.err'"
+done
+echo '[]' >"$DOCKER_POOLS"
+out=$(perr)
+check_eq "pool: empty pool list -> defaults" "$(pjson 'd["pools_from"]' <<<"$out")" '"default"'
+rm -f "$DOCKER_POOLS"
+# Prune: discovery failure removes nothing; recount failure reports what was removed.
+set_nets "$(net_json bridge - 172.17.0.0/16)" "$(net_json orph_default orph 172.20.0.0/16)"
+: >"$DOCKER_LOG"; rm -f "$DOCKER_NETS.rmd"
+out=$(DOCKER_NETLS_RC=1 perr --prune); rc=$?
+check_eq "pool --prune: discovery fails -> error, nothing removed" "$rc $(pjson '[d["pruned"]]' <<<"$out") $(rm_count)" '0 [[]] 0'
+out=$(DOCKER_INSPECT_RC_AFTER_RM=1 perr --prune 2>/dev/null); rc=$?
+check_eq "pool --prune: recount fails -> error with pruned" "$rc $(pjson '[d["error"], d["pruned"], "used" in d]' <<<"$out")" '0 ["docker network inspect failed: inspect boom", ["orph_default"], false]'
+rm -f "$DOCKER_NETS.rmd"
+
+section "usage"
+out=$(cd "$repo" && bash "$W" 2>&1 >/dev/null); rc=$?
+check_eq "usage: no args exit 2" "$rc" 2
+printf '%s\n' "$out" >"$WORK/usage.out"
+check "usage: no args lists sync and pool entries" bash -c "grep -q 'worktree.sh sync' '$WORK/usage.out' && grep -q 'worktree.sh pool' '$WORK/usage.out' && grep -q '^Usage:' '$WORK/usage.out'"
+check "usage: no args stops before Built-in defaults" bash -c "! grep -q 'Built-in defaults' '$WORK/usage.out'"
+check "usage: --help prints full header" bash -c "bash '$W' --help | grep -q 'Built-in defaults'"
 
 finish
