@@ -66,18 +66,18 @@ commands inside `source_worktree`. Act on:
    the user), or archive it (`worktree.sh rundir --archive`) and start over.
 2. `leftovers` (earlier runs' tasks): mention them.
 3. `config.offer_bare_migration: true`: run `bash SKILL_DIR/scripts/migrate_to_bare.sh` (dry
-   run) and ask the user whether to convert to the **bare-repo worktree layout**, in the format
-   of [bare-layout.md](references/bare-layout.md). Only on an explicit yes:
+   run), ask the user whether to convert to the **bare-repo worktree layout**, formatted per
+   [bare-layout.md](references/bare-layout.md). Only on an explicit yes:
    `migrate_to_bare.sh --apply`, re-run `preflight.sh`, re-read the agent docs from the new
    `source_worktree`. Blocked or declined → standard layout.
 4. `pr.ok: false`: the run only commits locally; the checkpoint says so. Note `pr.into`.
    Merge rules: [execution-plan.md](references/execution-plan.md#auto-merge-modes).
-5. `base_check.match: false`: the audited code differs from what Workers start from; agree on
-   the base with the user first.
-6. `docker_pool.free` < `config.max_parallel`: warn the user (step 3 checks per stage).
-7. `baseline` is the output of the step 0 baseline command
-   `git status --porcelain=v1 && git diff HEAD | sha256sum`, which `preflight.sh` already ran
-   in `source_worktree`. Keep it for `state.json`.
+5. `base_check.match: false`, `fetch_error` or `error`: agree
+   on the base with the user first.
+6. `docker_pool.error`: tell the user capacity is unknown; else `docker: false`: skip; else
+   `free` < `config.max_parallel`: warn (step 3 re-checks).
+7. `baseline` = output of `git status --porcelain=v1 && git diff HEAD | sha256sum`, already
+   run in `source_worktree`. Keep it for `state.json`.
 
 ### 1. Audit (read-only)
 - Establish scope with the user (paths; security / perf / debt / spec gaps).
@@ -89,7 +89,7 @@ commands inside `source_worktree`. Act on:
   fix. Group them into Worker-sized tasks with small non-overlapping whitelists.
 - With several tasks, draft the **execution plan** per
   [execution-plan.md](references/execution-plan.md): no dependencies → `independent` (all
-  Workers in parallel); related → `staged` (dependency-ordered stages, parallel within a
+  parallel); related → `staged` (dependency-ordered stages, parallel within a
   stage, each built on the previous stage's integrated result).
 
 ### 2. Spec (checkpoint)
@@ -133,14 +133,14 @@ Steps 3–5 run **once per stage** (`independent` = a single stage), in plan ord
 deferral, and the stage when integrated.
 
 ### 3. Worktree + dispatch
-1. Before creating the stage's worktrees: `bash SKILL_DIR/scripts/worktree.sh pool`. If `free`
-   < the stage's task count, run `worktree.sh pool --prune` only if the approval covers it
-   (it removes unused Compose networks of all projects on the machine; Compose recreates
-   them), else ask the user.
+1. Before creating the stage's worktrees: `bash SKILL_DIR/scripts/worktree.sh pool`.
+   `docker: false` → skip; `error` → tell the user, ask first. Else if `free` < the stage's
+   task count, run `worktree.sh pool --prune` only if the approval covers it (it removes all
+   projects' unused Compose networks; they are recreated), else ask the user.
 2. For each task: `bash SKILL_DIR/scripts/worktree.sh create <slug> [--base <ref>]` (stage 1:
    omit `--base`; stage 2+: `--base sop-stage/<n-1>`; `worktree.sh path <slug>` previews).
-   Check `provisioned` in the output; stop if an expected entry is missing. Stage 2+: dry-run each task's DoD in its new worktree through
-   `run_logged.sh` before dispatch (path/flag fixes only; else ask the user).
+   Check `provisioned` in the output; stop if an expected entry is missing. Stage 2+: dry-run each task's DoD in its new worktree
+   through `run_logged.sh` before dispatch (path/flag fixes only; else ask).
 3. Insert the worktree path and base into each spec, then dispatch **all of the stage's
    Workers in parallel** per [dispatch.md](references/dispatch.md), each on the model of its
    `worker_tier` (`worker` / `worker_light`; cap `max_parallel`).

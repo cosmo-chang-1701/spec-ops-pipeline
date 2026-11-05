@@ -11,8 +11,12 @@
 #   pr          pr.sh preflight
 #   baseline    exact output of `git status --porcelain=v1 && git diff HEAD | sha256sum`
 #               run in config.source_worktree (the step 0 baseline command)
-#   base_check  {"default_base","head","base","match"}: HEAD vs default_base in source_worktree
-#   docker_pool worktree.sh pool (read-only)
+#   base_check  {"default_base","head","base","match"}: HEAD vs default_base in source_worktree;
+#               plus "fetch_error" when --fetch's `git fetch` failed (match may still be true
+#               against a stale remote ref) and "error" when default_base does not resolve
+#               (match is then false)
+#   docker_pool worktree.sh pool (read-only); may be {"docker":false,"reason":...} (no Docker),
+#               or carry "error" (capacity unknown; without a "docker" key when pool itself failed)
 # --fetch: `git fetch` the remote of default_base first when it is a remote ref.
 # A failing sub-call becomes {"error":"<first stderr line>"} under its key; the JSON is
 # always printed. Exit: 0 = printed, 2 = usage error.
@@ -25,7 +29,7 @@ while (($#)); do
   case $1 in
     --agent) (($# >= 2)) || die "--agent needs a value"; agent=$2; shift 2 ;;
     --fetch) fetch=1; shift ;;
-    -h|--help) sed -n '2,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
 done
@@ -66,7 +70,7 @@ if [[ -n $src && -d $src ]]; then
   (cd "$src" && git status --porcelain=v1 && git diff HEAD | sha256sum) >"$tmp/baseline.out" 2>"$tmp/baseline.err" || rc=$?
   printf '%s' "$rc" >"$tmp/baseline.rc"
   git -C "$src" rev-parse HEAD >"$tmp/head.out" 2>"$tmp/head.err" || true
-  [[ -n $base ]] && { git -C "$src" rev-parse "$base^{commit}" >"$tmp/base.out" 2>"$tmp/base.err" || true; }
+  [[ -n $base ]] && { git -C "$src" rev-parse --verify -q "$base^{commit}" >"$tmp/base.out" 2>"$tmp/base.err" || true; }
 fi
 
 python3 - "$tmp" "$base" <<'PY'

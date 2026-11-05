@@ -6,14 +6,17 @@ The skill is also invoked with `resume` (phase 2 in a fresh session) or `cleanup
 Entered when the skill is invoked with `resume`, or when preflight finds a run in progress
 and the user chooses to resume. Do not redo steps 0–2.
 1. `preflight.sh --agent <claude|gemini|codex> --fetch` as in [step 0](../SKILL.md#0-preflight);
-   use only `runtime`, `run`, `baseline`, `base_check` and `leftovers`, compare them with
-   `state.json`, and do not re-ask the "resume?" question or overwrite the state. Check you are
-   on the `lead_phase2` model. `run.run_dir` → `run_dir`.
+   use only `runtime`, `run`, `baseline`, `base_check` and `leftovers`, only to compare them
+   with `state.json`: do not apply the step 0 actions (no "resume?" question, no new
+   baseline or approval written into the state). Check you are on the `lead_phase2`
+   model. `run.run_dir` → `run_dir`.
 2. Read `state.json` and `plan.md`, then only the specs and whitelists of `current_stage`
    (not the gap report; read it only if a finding's wording is needed to decide something).
 3. The preflight `baseline` (the step 0 baseline command on `source_worktree`) must equal
    `baseline` in the state. Check `git rev-parse <default_base>` still equals
-   `default_base_sha` (the `--fetch` preflight already refreshed a remote base). On any mismatch stop and ask the user — the plan was approved for that code.
+   `default_base_sha` (the `--fetch` preflight already refreshed a remote base). `base_check.fetch_error` or
+   `base_check.error` counts as a mismatch. On any mismatch stop and ask the user — the plan
+   was approved for that code.
 4. `leftovers` (`worktree.sh status`): compare with the task states in `state.json`. Worktrees of the
    current stage that already exist are reused, not re-created; a task recorded as
    `dispatched` or `in-review` has no reachable Worker anymore — re-dispatch it on its
@@ -29,7 +32,10 @@ and the user chooses to resume. Do not redo steps 0–2.
 Entered when the skill is invoked with `cleanup`, or when preflight finds a run whose tasks
 all have PRs waiting for the user and the user chooses to clean it up. The invocation is the
 user's consent, whatever `auto_cleanup` says; no model switch is needed.
-1. `preflight.sh --agent <claude|gemini|codex> --fetch`; use only `runtime`, `config`, `run` and `leftovers`, and do not re-ask the "clean up?" question or overwrite the state. Read `state.json`.
+1. `preflight.sh --agent <claude|gemini|codex> --fetch`; use only `runtime`, `config`, `run`
+   and `leftovers`, only to compare them with `state.json`: do not apply the step 0 actions (no
+   "clean up?" question, no new baseline or approval written into the state). Read
+   `state.json`.
 2. For each task with status `pr-open` (staged: the run's `final_pr`), run
    `pr.sh state <pr>`: `MERGED` → status `merged`; `OPEN` / `CLOSED` → report it and leave it.
 3. Run the [cleanup](execution-plan.md#6a-cleanup) and report what was cleaned and
