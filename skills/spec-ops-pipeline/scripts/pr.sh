@@ -3,7 +3,8 @@
 #
 # Usage:
 #   pr.sh preflight [--into <branch>]
-#       Can PRs be opened at all? gh installed and logged in, `origin` set, target fetched.
+#       Can PRs be opened at all? gh installed and logged in, `origin` set, the target branch
+#       exists on origin (`git ls-remote`: no local ref is updated; `open` fetches it itself).
 #   pr.sh open <worktree> --title <title> --body-file <file> [--into <branch>] [--base <ref>]
 #       Push the worktree's branch and open a PR into <branch>. Reuses an open PR for the
 #       same branch, so re-running after an interruption is safe. The worktree must be clean
@@ -68,7 +69,8 @@ cmd_preflight() {
   gh auth status >/dev/null 2>&1 || fail "gh is not logged in"
   git remote get-url origin >/dev/null 2>&1 || fail "no 'origin' remote"
   [[ -n $into ]] || fail "cannot tell origin's default branch (pass --into)"
-  git fetch --quiet origin "$into" >&2 2>&1 || fail "cannot fetch origin/$into"
+  git ls-remote --exit-code --heads origin "refs/heads/$into" >/dev/null 2>&1 ||
+    fail "cannot find branch '$into' on origin"
   printf '{"ok":true,"into":"%s","reason":""}\n' "$(json_escape "$into")"
 }
 

@@ -43,11 +43,30 @@ echo '{"mergeMethod": "ff"}' >"$cfgfile"
 (cd "$std" && bash "$W" config >/dev/null 2>&1); rc=$?
 check_eq "invalid mergeMethod in the config: exit 2" "$rc" 2
 
-section "config: autoMerge ignored"
+section "config: removed autoMerge"
+echo '{"autoMerge": "manual"}' >"$cfgfile"
+err=$(cd "$std" && bash "$W" config 2>&1 >/dev/null); rc=$?
+check_eq "deciding autoMerge in the repo config: exit 2" "$rc" 2
+check "removed autoMerge: names the file and the replacement" \
+  bash -c 'grep -qF "$1" <<<"$2" && grep -qF autoMergeRisk <<<"$2"' _ "$cfgfile" "$err"
+echo '{"autoMerge": "manual", "autoMergeRisk": ["L"]}' >"$cfgfile"
+err=$(cd "$std" && bash "$W" config 2>&1 >/dev/null); rc=$?
+check_eq "autoMerge next to autoMergeRisk: exit 0" "$rc" 0
+check "autoMerge next to autoMergeRisk: warned" grep -q "removed and is ignored" <<<"$err"
+check_eq "autoMerge next to autoMergeRisk: autoMergeRisk applies" "$(cfg_get '["auto_merge_risk"]')" "['L']"
+echo '{}' >"$cfgfile"
+(cd "$std" && SOP_AUTO_MERGE=manual bash "$W" config >/dev/null 2>&1); rc=$?
+check_eq "deciding SOP_AUTO_MERGE: exit 2" "$rc" 2
+check_eq "SOP_AUTO_MERGE_RISK outranks SOP_AUTO_MERGE" \
+  "$(cd "$std" && SOP_AUTO_MERGE=manual SOP_AUTO_MERGE_RISK=none bash "$W" config 2>/dev/null | json_get '["auto_merge_risk"]')" "[]"
 echo '{"autoMerge": "all"}' >"$cfgfile"
-check_eq "autoMerge key ignored" "$(cfg_get '["auto_merge_risk"]')" "['L', 'M']"
-(cd "$std" && SOP_AUTO_MERGE=bogus bash "$W" config >/dev/null 2>&1); rc=$?
-check_eq "SOP_AUTO_MERGE ignored" "$rc" 0
+check_eq "SOP_AUTO_MERGE_RISK outranks a file's autoMerge" \
+  "$(cd "$std" && SOP_AUTO_MERGE_RISK=L bash "$W" config 2>/dev/null | json_get '["auto_merge_risk"]')" "['L']"
+echo '{"autoMergeRisk": 3' >"$cfgfile"
+err=$(cd "$std" && bash "$W" config 2>&1 >/dev/null); rc=$?
+check_eq "unparsable config: exit 2" "$rc" 2
+check "unparsable config: one-line error, no traceback" bash -c '! grep -q Traceback <<<"$1"' _ "$err"
+echo '{}' >"$cfgfile"
 
 section "config: autoCleanup"
 check_eq "autoCleanup defaults to true" "$(cfg_get '["auto_cleanup"]')" True
@@ -76,7 +95,11 @@ echo '{"offerBareLayout": false, "autoMergeRisk": ["L", "M", "H"]}' >"$cfgfile"
 check_eq "repo config wins over the user config" "$(cfg_get '["auto_merge_risk"]')" "['L', 'M', 'H']"
 check_eq "other user keys still apply" "$(cfg_get '["merge_method"]')" merge
 echo '{"offerBareLayout": false, "autoMerge": "manual"}' >"$cfgfile"
-check_eq "legacy repo autoMerge ignored; user autoMergeRisk applies" "$(cfg_get '["auto_merge_risk"]')" "['L']"
+(cd "$std" && bash "$W" config >/dev/null 2>&1); rc=$?
+check_eq "repo autoMerge outranks the user's autoMergeRisk: exit 2" "$rc" 2
+echo '{"offerBareLayout": false}' >"$cfgfile"
+echo '{"autoMergeRisk": ["L"], "autoMerge": "all"}' >"$userfile"
+check_eq "user autoMerge beside autoMergeRisk: ignored" "$(cfg_get '["auto_merge_risk"]')" "['L']"
 echo '{"mergeMethod": "ff"}' >"$userfile"
 err=$(cd "$std" && bash "$W" config 2>&1 >/dev/null)
 check "invalid value names the user config" grep -qF "$userfile" <<<"$err"
@@ -254,7 +277,8 @@ cat >"$WORK/dockershim/docker" <<'SH'
 #!/usr/bin/env bash
 # State files: DOCKER_ROWS (ps rows "project<TAB>working_dir"), DOCKER_NETS (JSON array of
 # networks: Name, Labels, IPAM), DOCKER_NETC ("network<TAB>container id" attachments),
-# DOCKER_POOLS (JSON for `info`, absent = null). DOCKER_INFO_RC / DOCKER_NETRM_RC force failures.
+# DOCKER_POOLS (JSON for `info`, absent = null), DOCKER_COMPOSE_CFG (JSON for `compose config`,
+# absent = it fails). DOCKER_INFO_RC / DOCKER_NETRM_RC force failures, DOCKER_INFO_SLEEP a hang.
 printf '%s|%s\n' "$PWD" "$*" >>"$DOCKER_LOG"
 proj="" net="" quiet=0 fmt=0
 for a in "$@"; do
@@ -273,6 +297,7 @@ case $1 in
     fi
     exit 0 ;;
   info)
+    [[ -z ${DOCKER_INFO_SLEEP:-} ]] || sleep "$DOCKER_INFO_SLEEP"
     [[ ${DOCKER_INFO_RC:-0} -eq 0 ]] || exit "$DOCKER_INFO_RC"
     cat "$DOCKER_POOLS" 2>/dev/null || echo null ;;
   network)
@@ -298,6 +323,10 @@ d = [n for n in json.load(open(f)) if n["Name"] != sys.argv[1]]
 json.dump(d, open(f, "w"))' "$3" "$DOCKER_NETS" ;;
     esac ;;
   compose)
+    if [[ $2 == config ]]; then
+      [[ -n ${DOCKER_COMPOSE_CFG:-} && -f $DOCKER_COMPOSE_CFG ]] || exit 1
+      cat "$DOCKER_COMPOSE_CFG"; exit 0
+    fi
     rc=${DOCKER_DOWN_RC:-0}
     if [[ $rc -eq 0 && $2 == -p ]]; then   # a successful down removes the project's containers
       awk -F'\t' -v p="$3" '$1 != p' "$DOCKER_ROWS" >"$DOCKER_ROWS.tmp" && mv "$DOCKER_ROWS.tmp" "$DOCKER_ROWS"
@@ -418,6 +447,25 @@ DOCKER_NETRM_RC=1 dremove reclaim-fail >/dev/null 2>&1; rc=$?
 check_eq "reclaim: failed network rm is not fatal" "$rc" 0
 check "reclaim: worktree removed despite failed rm" test ! -e "$t"
 
+# A root compose file whose project name is overridden (`name:` / COMPOSE_PROJECT_NAME in .env):
+# the name `docker compose config` resolves is reclaimed too.
+t=$(new_task reclaim-cfgname)
+echo 'services: {}' >"$t/compose.yaml"
+git -C "$t" add compose.yaml && git -C "$t" commit -qm compose
+echo '{"name": "myapp-dev", "networks": {"default": {"name": "myapp-dev_default"}}}' >"$WORK/compose.cfg"
+: >"$DOCKER_ROWS"
+set_nets "$(net_json myapp-dev_default myapp-dev 172.20.0.0/16)" "$(net_json keep_default keep 172.21.0.0/16)"
+: >"$DOCKER_LOG"
+DOCKER_COMPOSE_CFG=$WORK/compose.cfg dremove reclaim-cfgname >/dev/null 2>&1
+check "reclaim: compose config ran in the worktree" grep -qF "$t|compose config --format json" "$DOCKER_LOG"
+check "reclaim: overridden project name's network removed" bash -c "! grep -q myapp-dev_default '$DOCKER_NETS'"
+check "reclaim: unrelated orphan left to pool --prune" grep -q keep_default "$DOCKER_NETS"
+# Without a root compose file no `compose config` is run.
+t=$(new_task reclaim-nocompose)
+: >"$DOCKER_LOG"
+DOCKER_COMPOSE_CFG=$WORK/compose.cfg dremove reclaim-nocompose >/dev/null 2>&1
+check_eq "reclaim: no compose file, no compose config" "$(grep -c '|compose config' "$DOCKER_LOG" || true)" 0
+
 # Directory-name normalisation: stage worktrees are named _stage-<id> -> project stage-<id>.
 t=$(cd "$std" && bash "$W" create reclaim-stagebr 2>/dev/null | json_get '["worktree_path"]')
 git -C "$t" commit --allow-empty -qm x
@@ -471,6 +519,25 @@ check_eq "pool: read-only without --prune" "$(rm_count)" 0
 out=$(pool --prune 2>/dev/null)
 check_eq "pool: prune removes only orphans" "$(pjson '[d["pruned"], d["used"]]' <<<"$out")" '[["held_default", "orph_default"], 4]'
 check "pool: live, attached and unlabelled kept" bash -c "grep -q live_default '$DOCKER_NETS' && grep -q attached_default '$DOCKER_NETS' && grep -q '\"plain\"' '$DOCKER_NETS'"
+set_nets "$(net_json a_default a 172.20.0.0/16)" "$(net_json b_default b 172.21.0.0/16)"
+: >"$DOCKER_ROWS"; : >"$DOCKER_NETC"
+out=$(pool --project a)
+check_eq "pool --project: orphans limited, no per_worktree" "$(pjson '[d["orphans"], "per_worktree" in d]' <<<"$out")" '[["a_default"], false]'
+
+# per_worktree: non-external networks of the source worktree's root compose file.
+out=$(pool)
+check_eq "pool: no root compose file -> per_worktree 0" "$(pjson 'd["per_worktree"]' <<<"$out")" 0
+src=$(cd "$repo" && bash "$W" config | json_get '["source_worktree"]')
+echo 'services: {}' >"$src/compose.yaml"
+echo '{"name": "x", "networks": {"default": {}, "back": {}, "ext": {"external": true}}}' >"$WORK/compose.cfg"
+out=$(DOCKER_COMPOSE_CFG=$WORK/compose.cfg pool)
+check_eq "pool: per_worktree counts non-external networks" "$(pjson 'd["per_worktree"]' <<<"$out")" 2
+out=$(pool)
+check_eq "pool: compose config fails -> per_worktree null" "$(pjson 'd["per_worktree"]' <<<"$out")" null
+rm "$src/compose.yaml"
+
+out=$(DOCKER_INFO_SLEEP=3 SOP_DOCKER_TIMEOUT=1 pool); rc=$?
+check_eq "pool: hung daemon -> docker false" "$rc $(pjson '[d["docker"], d["reason"]]' <<<"$out")" '0 [false, "docker daemon not responding"]'
 
 # Unreachable daemon and absent docker.
 out=$(DOCKER_INFO_RC=1 pool); rc=$?

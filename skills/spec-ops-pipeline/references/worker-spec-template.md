@@ -36,8 +36,8 @@ write, or run commands in any worktree but your own.
   worktree its own containers and networks, taken from a shared, limited Docker address
   pool. Use only `docker compose run --rm ...`; never `build`, `up`, or `down`, and never
   create Docker networks yourself. (The Lead's `worktree.sh remove` stops what `run` leaves
-  behind and reclaims the default-named and found projects' networks; `worktree.sh pool
-  --prune` is the fallback for overridden names.) If the DoD needs a rebuilt image
+  behind and reclaims the networks of the default-named, found and root-compose-resolved
+  projects; `worktree.sh pool --prune` is the fallback for anything else.) If the DoD needs a rebuilt image
   (Dockerfile or dependency changes), stop and report.
 
 ## Goal

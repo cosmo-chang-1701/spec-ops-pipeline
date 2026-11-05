@@ -18,8 +18,9 @@
 #   docker_pool worktree.sh pool (read-only); may be {"docker":false,"reason":...} (no Docker),
 #               or carry "error" (capacity unknown; without a "docker" key when pool itself failed)
 # --fetch: `git fetch` the remote of default_base first when it is a remote ref.
-# A failing sub-call becomes {"error":"<first stderr line>"} under its key; the JSON is
-# always printed. Exit: 0 = printed, 2 = usage error.
+# The sub-calls run in parallel. A failing sub-call becomes {"error":"<last stderr line>"}
+# under its key (the cause comes last, after warnings or a traceback); the JSON is always
+# printed. Exit: 0 = printed, 2 = usage error.
 set -euo pipefail
 
 die() { printf 'preflight: %s\n' "$*" >&2; exit 2; }
@@ -39,7 +40,7 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/sop-preflight.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 
-# run <key> <cmd>...: stdout -> $tmp/<key>.out, first stderr line + exit code kept.
+# run <key> <cmd>...: stdout -> $tmp/<key>.out, stderr -> $tmp/<key>.err, exit code kept.
 run() {
   local key=$1; shift
   local rc=0
@@ -47,12 +48,14 @@ run() {
   printf '%s' "$rc" >"$tmp/$key.rc"
 }
 
-run runtime bash "$here/detect_runtime.sh" --agent "$agent"
+# Independent, partly network- or Docker-bound: run them in the background. Only config is
+# needed below (source worktree, default base), so it runs in the foreground.
+run runtime bash "$here/detect_runtime.sh" --agent "$agent" &
+run leftovers bash "$here/worktree.sh" status &
+run run bash "$here/worktree.sh" rundir &
+run pr bash "$here/pr.sh" preflight &
+run pool bash "$here/worktree.sh" pool &
 run config bash "$here/worktree.sh" config
-run leftovers bash "$here/worktree.sh" status
-run run bash "$here/worktree.sh" rundir
-run pr bash "$here/pr.sh" preflight
-run pool bash "$here/worktree.sh" pool
 
 # Source worktree from the config JSON (empty when config failed).
 cfg() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2]) or "")' "$tmp/config.out" "$1" 2>/dev/null || true; }
@@ -72,6 +75,7 @@ if [[ -n $src && -d $src ]]; then
   git -C "$src" rev-parse HEAD >"$tmp/head.out" 2>"$tmp/head.err" || true
   [[ -n $base ]] && { git -C "$src" rev-parse --verify -q "$base^{commit}" >"$tmp/base.out" 2>"$tmp/base.err" || true; }
 fi
+wait
 
 python3 - "$tmp" "$base" <<'PY'
 import json, os, sys
@@ -85,8 +89,8 @@ def rd(name):
         return None
 
 def err(key, fallback):
-    first = (rd(key + ".err") or "").strip().splitlines()
-    return {"error": first[0] if first else fallback}
+    lines = [ln.strip() for ln in (rd(key + ".err") or "").splitlines() if ln.strip()]
+    return {"error": lines[-1] if lines else fallback}
 
 def one(key):
     out, rc = rd(key + ".out") or "", rd(key + ".rc")

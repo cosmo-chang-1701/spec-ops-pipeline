@@ -74,7 +74,8 @@ commands inside `source_worktree`. Act on:
    Merge rules: [execution-plan.md](references/execution-plan.md#auto-merge-modes).
 5. `base_check.match: false`, `fetch_error` or `error`: agree on the base with the user first.
 6. `docker_pool.error`: tell the user capacity is unknown; else `docker: false`: skip; else
-   `free` < `config.max_parallel`: warn (step 3 re-checks).
+   keep `free` and `per_worktree` for the checkpoint's Docker pool line (no threshold here:
+   `need` depends on the plan).
 7. `baseline` = output of `git status --porcelain=v1 && git diff HEAD | sha256sum`, already
    run in `source_worktree`. Keep it for `state.json`.
 
@@ -134,7 +135,7 @@ deferral, and the stage when integrated.
 ### 3. Worktree + dispatch
 1. Before creating the stage's worktrees: `bash SKILL_DIR/scripts/worktree.sh pool`.
    `docker: false` → skip; `error` → tell the user, ask first. Else if `free` < the stage's
-   task count, run `worktree.sh pool --prune` only if the approval covers it (it removes all
+   task count × `per_worktree` (`null` → 1), run `worktree.sh pool --prune` only if the approval covers it (it removes all
    projects' unused Compose networks; they are recreated), else ask the user.
 2. For each task: `bash SKILL_DIR/scripts/worktree.sh create <slug> [--base <ref>]` (stage 1:
    omit `--base`; stage 2+: `--base sop-stage/<n-1>`; `worktree.sh path <slug>` previews).

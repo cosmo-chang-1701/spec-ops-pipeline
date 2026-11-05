@@ -69,6 +69,14 @@ git -C "$std" remote set-head origin -a >/dev/null
 git clone -q "$up" "$WORK/noorigin" && git -C "$WORK/noorigin" remote remove origin
 out=$(pr "$WORK/noorigin" -- preflight); rc=$?
 check_eq "no origin: exit 1" "$rc" 1
+before=$(git -C "$std" rev-parse origin/main)
+git -C "$up" commit -q --allow-empty -m "upstream moved"
+pr "$std" -- preflight >/dev/null
+check_eq "preflight leaves origin/<into> as it was (no fetch)" "$(git -C "$std" rev-parse origin/main)" "$before"
+git -C "$std" fetch -q origin
+out=$(pr "$std" -- preflight --into no-such-branch); rc=$?
+check_eq "missing target branch: exit 1" "$rc" 1
+check_eq "missing target branch: reason" "$(json_get '["reason"]' <<<"$out")" "cannot find branch 'no-such-branch' on origin"
 
 section "open"
 t=$(cd "$std" && bash "$W" create task 2>/dev/null | json_get '["worktree_path"]')
