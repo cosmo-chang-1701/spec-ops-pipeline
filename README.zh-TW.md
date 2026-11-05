@@ -294,6 +294,8 @@ git common dir 內，所以永遠不會被當成變更、所有 worktree 共用�
 通過審查的任務都會有一個 PR；`autoMergeRisk` 列出 Lead 接著要自動合併哪些風險層級的 PR
 （PR 的 checks 通過後才合併，絕不使用 `--admin`，合併後會刪除遠端分支）。預設 `["L", "M"]`，
 只有 H 風險的 PR 留給你合併；`[]` 表示全部由你合併，`["L", "M", "H"]` 表示全部自動合併。
+已移除的 `autoMerge` / `SOP_AUTO_MERGE` 設定在你改成 `autoMergeRisk` 之前會直接報錯，避免舊的
+`"manual"` 設定被悄悄改成自動合併。
 任務還必須在第 1 輪審查就通過、且未升級到較強的 Worker 模型，PR 才會自動合併；`staged` 模式下
 須每個任務都符合，才會合併那個單一 PR。
 

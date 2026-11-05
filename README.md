@@ -319,9 +319,10 @@ It takes the repo-independent keys `autoMergeRisk`, `mergeMethod`, `autoCleanup`
 Every task that passes review gets a PR. `autoMergeRisk` lists the risk levels whose PRs the
 Lead then merges (after the PR's checks pass, never with `--admin`, deleting the remote branch
 afterwards). The default, `["L", "M"]`, leaves only H-risk PRs to you; `[]` leaves all of them,
-`["L", "M", "H"]` none. A PR is merged only if its task was also approved in review round 1 and
-not escalated to the stronger Worker model; in `staged` mode the single PR is merged only if
-every task qualifies.
+`["L", "M", "H"]` none. The removed `autoMerge` / `SOP_AUTO_MERGE` settings are an error
+until you replace them, so an old `"manual"` opt-out never turns into auto-merging. A PR is
+merged only if its task was also approved in review round 1 and not escalated to the stronger
+Worker model; in `staged` mode the single PR is merged only if every task qualifies.
 
 `mergeMethod` is `squash` (default), `merge` or `rebase`. You can change the list, or a single
 task's Merge value, when you approve the checkpoint.

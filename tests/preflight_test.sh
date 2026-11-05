@@ -68,6 +68,15 @@ check_eq "no --fetch: base unchanged" "$([[ $(printf '%s' "$out5" | json_get '["
 out6=$(cd "$repo" && SOP_CONFIG=$WORK/cfg.json PATH="$WORK/nobin:$PATH" bash "$P" --agent claude --fetch 2>/dev/null)
 check_eq "--fetch: base moved to the upstream commit" "$(printf '%s' "$out6" | json_get '["base_check"]["base"]')" "$newsha"
 
+# With a working gh, pr.sh preflight must not refresh the base either (it only ls-remotes).
+mkdir -p "$WORK/okgh"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$WORK/okgh/gh"; chmod +x "$WORK/okgh/gh"
+git -C "$WORK/std.up" commit -q --allow-empty -m four
+newsha=$(git -C "$WORK/std.up" rev-parse HEAD)
+out5b=$(cd "$repo" && SOP_CONFIG=$WORK/cfg.json PATH="$WORK/okgh:$WORK/nobin:$PATH" bash "$P" --agent claude 2>/dev/null)
+check_eq "gh ok: pr.ok true" "$(printf '%s' "$out5b" | json_get '["pr"]["ok"]')" True
+check_eq "gh ok, no --fetch: base unchanged" "$([[ $(printf '%s' "$out5b" | json_get '["base_check"]["base"]') == "$newsha" ]] && echo moved || echo same)" same
+
 section "--fetch failure -> fetch_error"
 orig_url=$(git -C "$repo" remote get-url origin)
 git -C "$repo" remote set-url origin "$WORK/no-such-remote.git"
@@ -84,6 +93,10 @@ check_eq "exit 0 outside a repo" "$rc" 0
 check_eq "config has error" "$(printf '%s' "$out7" | json_get '["config"].__contains__("error")')" True
 check_eq "baseline has error" "$(printf '%s' "$out7" | json_get '["baseline"].__contains__("error")')" True
 check_eq "runtime still fine" "$(printf '%s' "$out7" | json_get '["runtime"]["ecosystem"]')" claude
+printf '{"autoMergeRisk": 3' >"$WORK/bad.json"
+out8=$(cd "$repo" && SOP_CONFIG=$WORK/bad.json PATH="$WORK/nobin:$PATH" bash "$P" --agent claude 2>/dev/null)
+check "config error is the cause, not a warning or traceback" \
+  bash -c 'grep -q "^worktree: cannot read" <<<"$1"' _ "$(printf '%s' "$out8" | json_get '["config"]["error"]')"
 
 section "docker and gh absent"
 check_eq "docker_pool is valid (docker false)" "$(printf '%s' "$out" | json_get '["docker_pool"]["docker"]')" False

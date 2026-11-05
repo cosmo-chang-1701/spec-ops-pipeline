@@ -19,9 +19,12 @@
 #   worktree.sh provision <worktree>          # provision an existing worktree (see below)
 #   worktree.sh rundir [--archive]            # persistent run dir <git common dir>/sop-run (JSON);
 #                                             # --archive renames it to sop-run.<UTC timestamp>
-#   worktree.sh pool [--prune]                # Docker address-pool capacity (JSON, exit 0):
-#                                             # total/used/free slots, orphaned Compose networks;
-#                                             # --prune removes the orphans. Read-only without --prune
+#   worktree.sh pool [--prune] [--project <p>]... [--compose-dir <dir>]
+#                                             # Docker address-pool capacity (JSON, exit 0):
+#                                             # total/used/free slots, networks per worktree,
+#                                             # orphaned Compose networks; --prune removes the
+#                                             # orphans. Read-only without --prune. --project /
+#                                             # --compose-dir limit orphans to those projects
 #   worktree.sh sync                          # fast-forward the source worktree's branch to its
 #                                             # upstream (JSON); exit 1 = skipped, nothing changed
 #
@@ -49,6 +52,9 @@
 #   autoMergeRisk (risk levels whose PRs the Lead merges once open and APPROVEd, a subset of
 #   ["L", "M", "H"], default ["L", "M"]; env SOP_AUTO_MERGE_RISK="L,M" or "none"),
 #   mergeMethod ("squash" | "merge" | "rebase", default "squash"; env SOP_MERGE_METHOD).
+#   The removed autoMerge / SOP_AUTO_MERGE is an error (exit 2) wherever it would have decided
+#   the risk levels, so an old opt-out is never silently turned into auto-merging; it is only
+#   a warning where an autoMergeRisk / SOP_AUTO_MERGE_RISK of higher precedence decides.
 #   autoCleanup (default true; env SOP_AUTO_CLEANUP=1|0): after a PR is merged the Lead removes
 #   its worktrees and branches, fast-forwards the source worktree and archives the run dir.
 #
@@ -74,18 +80,25 @@
 # services `docker compose run` leaves behind. A project that also has containers started
 # elsewhere (a name shared with the main checkout) is left running. Disable with
 # SOP_COMPOSE_DOWN=0; without docker or a reachable daemon this step is skipped.
-# It then removes the leftover Compose networks (`docker network rm`) of those projects and of
+# It then removes the leftover Compose networks (`docker network rm`) of those projects, of
 # the default project name of the worktree directory (`docker compose run --rm` leaves
-# `<dir>_default` behind), but only for a project with no container in any state, and only
-# networks no container in any state is attached to.
+# `<dir>_default` behind) and of the project the worktree's root compose file resolves to
+# (`docker compose config`: a top-level `name:` or COMPOSE_PROJECT_NAME, e.g. in a provisioned
+# `.env`), but only for a project with no container in any state, and only networks no
+# container in any state is attached to (the same rule as `pool --prune`, which it runs).
 #
 # `pool` reports how many slots of the Docker address pool (daemon `default-address-pools`, or
 # Docker's built-in 172.17-31.0.0/16 + 192.168.0.0/16 split at /20 = 31 slots) are taken by
 # existing networks: {"docker":true,"pools_from":"daemon"|"default","total":31,"used":28,
-# "free":3,"orphans":[...],"pruned":[...]}. Orphans are Compose networks whose project has no
+# "free":3,"per_worktree":2,"orphans":[...],"pruned":[...]}. `per_worktree` is how many slots
+# one worktree's Compose project takes: the non-external networks (incl. `default`) of the
+# source worktree's root compose file per `docker compose config`; 0 without a root compose
+# file (a compose file in a subdirectory is one project shared by all worktrees); null when
+# `docker compose config` fails. Orphans are Compose networks whose project has no
 # container in any state and with no container attached. `free` is an upper bound: Docker
 # also skips slots that overlap host routes or VPN interfaces. Without docker or a reachable
-# daemon: {"docker":false,"reason":"..."}, still exit 0. When Docker data cannot be read or
+# (or responding, SOP_DOCKER_TIMEOUT seconds, default 30) daemon:
+# {"docker":false,"reason":"..."}, still exit 0. When Docker data cannot be read or
 # parsed (network ls/inspect fails or is not a JSON list, no valid default-address-pools entry)
 # it prints {"docker":true,"error":"...","pruned":[...]} instead, no counts, still exit 0;
 # `pruned` lists networks already removed in this call.
@@ -163,6 +176,23 @@ find_user_config() {
   return 0
 }
 
+# check_config: dies (exit 2, one line) when the repo config is not a JSON object, so later
+# reads never fail with a traceback.
+check_config() {
+  [[ -n $CONFIG_FILE ]] || return 0
+  command -v python3 >/dev/null || die "python3 is required to read $CONFIG_FILE"
+  local err
+  err=$(python3 -c '
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        ok = isinstance(json.load(f), dict)
+except (OSError, ValueError) as e:
+    sys.exit(str(e))
+if not ok:
+    sys.exit("not a JSON object")' "$CONFIG_FILE" 2>&1) || die "cannot read $CONFIG_FILE: $err"
+}
+
 # cfg <dotted.key>: prints a scalar, or one line per list item; nothing if unset.
 cfg() {
   [[ -n $CONFIG_FILE ]] || return 0
@@ -219,6 +249,7 @@ inspect_repo() {
   fi
 
   find_config
+  check_config
   PATH_STYLE=$(cfg pathStyle)
   if [[ -z $PATH_STYLE ]]; then
     if [[ $LAYOUT == bare ]]; then PATH_STYLE=branch; else PATH_STYLE=slug; fi
@@ -423,34 +454,16 @@ compose_down() {
 }
 
 # reclaim_networks <worktree>: after compose_down, removes the networks of Compose projects that
-# have no container left in any state: the projects compose_down handled plus the default
-# project name of the worktree directory. Networks with any container attached are kept.
+# have no container left in any state: the projects compose_down handled, the default project
+# name of the worktree directory and the project its root compose file resolves to. Runs
+# `pool --prune` limited to those projects, so the orphan rule lives in one place.
 reclaim_networks() {
-  local wt=$1 base name p net out candidates=()
+  local wt=$1 p out args=()
   [[ ${SOP_COMPOSE_DOWN:-1} != 0 ]] && command -v docker >/dev/null || return 0
-  base=$(basename "$wt")
-  name=${base,,}; name=${name//[^a-z0-9_-]/}
-  name=${name#"${name%%[!_-]*}"}   # strip leading _ and -
-  candidates=("${COMPOSE_OWN_PROJECTS[@]}")
-  [[ -z $name ]] || candidates+=("$name")
-  while IFS= read -r p; do
-    [[ -n $p ]] || continue
-    out=$(docker ps -a -q --filter "label=com.docker.compose.project=$p" 2>/dev/null) || return 0
-    [[ -z $out ]] || continue
-    out=$(docker network ls --filter "label=com.docker.compose.project=$p" --format '{{.Name}}' 2>/dev/null) || continue
-    while IFS= read -r net; do
-      [[ -n $net ]] || continue
-      # `network inspect .Containers` lists running containers only; ps -a also sees stopped ones.
-      local attached
-      attached=$(docker ps -a -q --filter "network=$net" 2>/dev/null) || continue
-      [[ -z $attached ]] || continue
-      if docker network rm "$net" >/dev/null 2>&1; then
-        printf 'removed network: %s\n' "$net" >&2
-      else
-        warn "docker network rm failed for '$net'; continuing"
-      fi
-    done <<<"$out"
-  done < <(printf '%s\n' "${candidates[@]}" | sort -u)
+  command -v python3 >/dev/null || { warn "python3 not found; Compose networks not reclaimed"; return 0; }
+  for p in "${COMPOSE_OWN_PROJECTS[@]}"; do args+=(--project "$p"); done
+  out=$(cmd_pool --prune --compose-dir "$wt" "${args[@]}") || true
+  [[ $out != *'"error"'* ]] || warn "Compose networks not reclaimed: $out"
 }
 
 emit_json() {
@@ -470,12 +483,12 @@ cmd_config() {
     "$DEFAULT_BASE" "$BRANCH_PREFIX" "$STAGE_PREFIX" "$PROVISION_FROM" "$COPY_MODE" \
     "$(printf '%s\n' "${COPIES[@]}")" "$(printf '%s\n' "${LINKS[@]}")" \
     "$user_config" "${SOP_AUTO_MERGE_RISK:-}" "${SOP_MERGE_METHOD:-}" \
-    "${SOP_AUTO_CLEANUP:-}" <<'PY'
+    "${SOP_AUTO_CLEANUP:-}" "${SOP_AUTO_MERGE:-}" <<'PY'
 import json, sys
 (config, layout, repo, anchor, main_wt, source, root, resolved_by, path_style,
  default_branch, default_base, branch_prefix, stage_prefix, provision_from, copy_mode,
  copies, links, user_config, env_auto_merge_risk,
- env_merge_method, env_auto_cleanup) = sys.argv[1:22]
+ env_merge_method, env_auto_cleanup, env_auto_merge) = sys.argv[1:23]
 RISKS = ("L", "M", "H")
 USER_KEYS = ("maxParallel", "workerNotes", "offerBareLayout", "autoMergeRisk", "mergeMethod",
              "autoCleanup")
@@ -485,12 +498,47 @@ def fail(message):
     sys.exit(2)
 
 def load(path):
-    return json.load(open(path)) if path else {}
+    if not path:
+        return {}
+    try:
+        with open(path) as f:
+            value = json.load(f)
+    except (OSError, ValueError) as e:
+        fail(f"cannot read {path}: {e}")
+    if not isinstance(value, dict):
+        fail(f"{path} must hold a JSON object")
+    return value
+
+repo_data, user_data = load(config), load(user_config)
+
+def check_removed_auto_merge():
+    # autoMerge / SOP_AUTO_MERGE were removed. Walk the old precedence (env before files,
+    # repo before user, autoMergeRisk before autoMerge in one layer): where the removed key
+    # would still have decided, fail, so an old "manual" opt-out never turns into auto-merging.
+    layers = [
+        ("env SOP_AUTO_MERGE", env_auto_merge_risk, env_auto_merge,
+         "set SOP_AUTO_MERGE_RISK instead (manual -> none, low-risk -> L, all -> L,M,H)"),
+    ]
+    for path, layer in ((config, repo_data), (user_config, user_data)):
+        if path:
+            layers.append((f"autoMerge in {path}", "autoMergeRisk" in layer, "autoMerge" in layer,
+                           'replace it with autoMergeRisk ("manual" -> [], "low-risk" -> ["L"], '
+                           '"all" -> ["L", "M", "H"])'))
+    decided = False
+    for where, has_risk, has_legacy, fix in layers:
+        if has_legacy:
+            if decided or has_risk:
+                print(f"worktree: {where} was removed and is ignored; {fix}", file=sys.stderr)
+            else:
+                fail(f"{where} was removed; {fix}")
+        decided = decided or bool(has_risk)
+
+check_removed_auto_merge()
 
 # The repo config wins key by key; the user config only fills in USER_KEYS.
-data, origin = load(config), {}
+data, origin = dict(repo_data), {}
 origin.update((key, config) for key in data)
-for key, value in load(user_config).items():
+for key, value in user_data.items():
     if key in USER_KEYS and key not in data:
         data[key], origin[key] = value, user_config
 
@@ -770,29 +818,47 @@ cmd_rundir() {
     "$(json_escape "$dir/logs")" "$([[ -f $dir/state.json ]] && echo true || echo false)"
 }
 
-# cmd_pool [--prune]: Docker address-pool capacity as one JSON line; --prune removes orphans.
+# cmd_pool [--prune] [--project <p>]... [--compose-dir <dir>]: Docker address-pool capacity as
+# one JSON line; --prune removes orphans. --project / --compose-dir (the default directory-name
+# project of <dir> and the project its root compose file resolves to) limit orphans to those
+# projects.
 cmd_pool() {
-  local prune=0
+  local prune=0 projects=() compose_dirs=()
   while (($#)); do
     case $1 in
       --prune) prune=1; shift ;;
+      --project) (($# >= 2)) || die "--project needs a value"; projects+=("$2"); shift 2 ;;
+      --compose-dir) (($# >= 2)) || die "--compose-dir needs a value"; compose_dirs+=("$2"); shift 2 ;;
       *) die "unknown argument: $1" ;;
     esac
   done
   if ! command -v docker >/dev/null; then
     printf '{"docker":false,"reason":"docker not found"}\n'; return 0
   fi
-  if ! docker info >/dev/null 2>&1; then
-    printf '{"docker":false,"reason":"docker daemon unreachable"}\n'; return 0
-  fi
-  python3 - "$prune" <<'PY'
-import ipaddress, json, subprocess, sys
+  python3 - "$prune" "${SOP_DOCKER_TIMEOUT:-30}" "${SOURCE_WORKTREE:-}" \
+    "$(printf '%s\n' "${projects[@]}")" "$(printf '%s\n' "${compose_dirs[@]}")" <<'PY'
+import ipaddress, json, os, re, subprocess, sys
 
 prune = sys.argv[1] == "1"
+try:
+    TIMEOUT = float(sys.argv[2])
+except ValueError:
+    TIMEOUT = 30.0
+source = sys.argv[3]
+only_projects = [p for p in sys.argv[4].splitlines() if p]
+compose_dirs = [d for d in sys.argv[5].splitlines() if d]
 LABEL = "com.docker.compose.project"
+COMPOSE_FILES = ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")
 
-def docker(*args):
-    return subprocess.run(["docker", *args], capture_output=True, text=True)
+class Timeout(Exception):
+    pass
+
+def docker(*args, cwd=None):
+    try:
+        return subprocess.run(["docker", *args], capture_output=True, text=True, cwd=cwd,
+                              timeout=TIMEOUT)
+    except subprocess.TimeoutExpired:
+        raise Timeout("docker %s timed out after %gs" % (" ".join(args[:2]), TIMEOUT))
 
 def default_pools():
     pools = [("172.%d.0.0/16" % i, 16) for i in range(17, 32)]
@@ -800,9 +866,12 @@ def default_pools():
 
 pruned = []
 
-def fail(msg):
-    print(json.dumps({"docker": True, "error": msg, "pruned": pruned}, separators=(",", ":")))
+def emit(obj):
+    print(json.dumps(obj, separators=(",", ":")))
     sys.exit(0)
+
+def fail(msg):
+    emit({"docker": True, "error": msg, "pruned": pruned})
 
 def docker_error(step, r):
     lines = (r.stderr or "").strip().splitlines()
@@ -824,7 +893,13 @@ def valid_pool(p):
     return (base, size)
 
 def load_pools():
-    r = docker("info", "--format", "{{json .DefaultAddressPools}}")
+    # This one `docker info` call is also the reachability check.
+    try:
+        r = docker("info", "--format", "{{json .DefaultAddressPools}}")
+    except Timeout:
+        emit({"docker": False, "reason": "docker daemon not responding"})
+    if r.returncode != 0:
+        emit({"docker": False, "reason": "docker daemon unreachable"})
     try:
         data = json.loads(r.stdout.strip() or "null")
     except ValueError:
@@ -902,16 +977,46 @@ def capacity(pools, subs):
             used += cur_hi - cur_lo + 1
     return total, used
 
+def compose_config(d):
+    """Resolved config of d's root compose file: {} without one, None when it cannot be read."""
+    if not d or not any(os.path.isfile(os.path.join(d, f)) for f in COMPOSE_FILES):
+        return {}
+    try:
+        r = docker("compose", "config", "--format", "json", cwd=d)
+    except Timeout:
+        return None
+    if r.returncode != 0:
+        return None
+    try:
+        cfg = json.loads(r.stdout)
+    except ValueError:
+        return None
+    return cfg if isinstance(cfg, dict) else None
+
+def dir_project(d):
+    # Compose's default project name: the directory name, normalized.
+    name = re.sub(r"[^a-z0-9_-]", "", os.path.basename(os.path.normpath(d)).lower())
+    return name.lstrip("_-")
+
+def per_worktree():
+    cfg = compose_config(source)
+    if cfg is None:
+        return None
+    nets = cfg.get("networks") or {}
+    if not isinstance(nets, dict):
+        return None
+    return sum(1 for n in nets.values() if not (isinstance(n, dict) and n.get("external")))
+
 def has_containers(*flt):
     r = docker("ps", "-a", "-q", "--filter", *flt)
     return r.returncode != 0 or bool(r.stdout.strip())
 
-def find_orphans(nets):
+def find_orphans(nets, wanted):
     orphans, project_busy = [], {}
     for n in nets:
         p = (n.get("Labels") or {}).get(LABEL)
         name = n.get("Name")
-        if not p or not name:
+        if not p or not name or (wanted is not None and p not in wanted):
             continue
         if p not in project_busy:
             project_busy[p] = has_containers("label=%s=%s" % (LABEL, p))
@@ -921,9 +1026,18 @@ def find_orphans(nets):
     return sorted(set(orphans))
 
 def main():
-    pools, source = load_pools()
+    pools, pools_from = load_pools()
+    wanted = None
+    if only_projects or compose_dirs:
+        wanted = set(only_projects)
+        for d in compose_dirs:
+            wanted.add(dir_project(d))
+            name = (compose_config(d) or {}).get("name")
+            if isinstance(name, str):
+                wanted.add(name)
+        wanted.discard("")
     nets = inspect_networks()
-    orphans = find_orphans(nets)
+    orphans = find_orphans(nets, wanted)
     if prune:
         for name in orphans:
             if docker("network", "rm", name).returncode == 0:
@@ -934,12 +1048,17 @@ def main():
         if pruned:
             nets = inspect_networks()
     total, used = capacity(pools, subnets(nets))
-    print(json.dumps({"docker": True, "pools_from": source, "total": total, "used": used,
-                      "free": total - used, "orphans": orphans, "pruned": pruned},
-                     separators=(",", ":")))
+    out = {"docker": True, "pools_from": pools_from, "total": total, "used": used,
+           "free": total - used}
+    if wanted is None:   # a full report; a limited (reclaim) run skips the compose lookup
+        out["per_worktree"] = per_worktree()
+    out.update(orphans=orphans, pruned=pruned)
+    emit(out)
 
 try:
     main()
+except Timeout as e:
+    fail(str(e))
 except Exception as e:  # never leak a traceback: unreadable docker data is reported as JSON
     fail("unexpected docker data: %s" % e)
 PY
