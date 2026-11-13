@@ -9,12 +9,18 @@ heuristics — e.g. a Claude Code session may also have `GEMINI_API_KEY` set).
 | Role | Runs | Claude (Claude Code) | Gemini (Antigravity) | Codex |
 | :--- | :--- | :--- | :--- | :--- |
 | `lead` | Phase 1: preflight, audit, spec, checkpoint | `claude-opus-5-5` · high | `gemini-4-argon-high` · high | `model` from `~/.codex/config.toml` · high |
-| `lead_phase2` | Phase 2: dispatch, gate, review, close-out | `claude-sonnet-5-5` · high | `gemini-3.8-flash-high` · high | same as `lead` |
-| `worker` | Standard tasks | `claude-sonnet-5-5` · medium | `gemini-3.8-flash-high` · high | same model · medium |
+| `lead_phase2` | Phase 2: dispatch, gate, review, close-out | `claude-sonnet-5-5` · medium | `gemini-4-hydrogen-medium` · medium | same as `lead` |
+| `worker` | Standard tasks | `claude-sonnet-5-5` · medium | `gemini-4-hydrogen-medium` · medium | same model · medium |
 | `worker_light` | Light tasks ([tiers](#worker-tier)) | `claude-haiku-5-5` · medium | same as `worker` | same model · low |
-| `scout` | Read-only audit sweeps ([scout.md](scout.md)) | `claude-haiku-5-5` · low | same as `worker` | same model · low |
+| `scout` | Read-only audit sweeps ([scout.md](scout.md)) | `claude-haiku-5-5` · medium | same as `worker` | same model · low |
 | Reviewer | Read-only review of a Worker's diff ([review-checklist.md](review-checklist.md#reviewer-subagent)) | `lead` | `lead` | `lead` |
 | Plan Critic | [plan-critic.md](plan-critic.md) | `lead` if any task is H-risk, else `lead_phase2` | same rule | same rule |
+
+The Gemini column is the `gemini-4` profile (default). If the `model` key of
+`~/.gemini/antigravity-cli/settings.json` (display name or id) starts with `Gemini 3.8 Flash`,
+the `gemini-3.8-flash` profile applies instead: `lead` `gemini-3.8-flash-high` · high; every
+other role `gemini-3.8-flash-medium` · medium. A missing file or any other model keeps
+`gemini-4`; `detected_by` reports `model:<profile>(settings|default)`.
 
 Switching to the Lead model of the current phase: [SKILL.md](../SKILL.md#model-assignment).
 Unknown ecosystems fall back to the Claude column. Each block also has `dispatch_model`, the

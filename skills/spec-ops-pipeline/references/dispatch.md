@@ -16,7 +16,7 @@ Use the subagent tool (`Agent` / `Task`), not a shell call:
   under the worktree (or `cd` there in each shell command).
 - Do **not** set `isolation: "worktree"` — the worktree is already managed by `worktree.sh`.
 
-Dispatch runs in phase 2, so the Lead is the `lead_phase2` model (Sonnet 5.5 / high by
+Dispatch runs in phase 2, so the Lead is the `lead_phase2` model (Sonnet 5.5 / medium by
 default); on the wrong model, see [SKILL.md](../SKILL.md#model-assignment).
 
 A Worker's diff is later reviewed by a different, read-only subagent on the `lead` model

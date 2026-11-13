@@ -214,7 +214,7 @@ ln -s ~/src/spec-ops-pipeline/skills/spec-ops-pipeline \
 
 ```text
 /clear
-/model sonnet        # phase 2 的 Lead 模型（Claude Code）；/effort high
+/model sonnet        # phase 2 的 Lead 模型（Claude Code）；/effort medium
 /spec-ops-pipeline resume
 ```
 
@@ -229,9 +229,12 @@ ln -s ~/src/spec-ops-pipeline/skills/spec-ops-pipeline \
 
 | 生態系 | Lead · phase 1（稽核、spec） | Lead · phase 2（派工、檢查、審查） | Worker | 輕量 Worker | Scout |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| Claude（Claude Code） | `claude-opus-5-5` · high | `claude-sonnet-5-5` · high | `claude-sonnet-5-5` · medium | `claude-haiku-5-5` · medium | `claude-haiku-5-5` · low |
-| Gemini（Antigravity） | `gemini-4-argon-high` · high | `gemini-3.8-flash-high` · high | `gemini-3.8-flash-high` · high | 與 Worker 相同 | 與 Worker 相同 |
+| Claude（Claude Code） | `claude-opus-5-5` · high | `claude-sonnet-5-5` · medium | `claude-sonnet-5-5` · medium | `claude-haiku-5-5` · medium | `claude-haiku-5-5` · medium |
+| Gemini 4（Antigravity，預設） | `gemini-4-argon-high` · high | `gemini-4-hydrogen-medium` · medium | `gemini-4-hydrogen-medium` · medium | 與 Worker 相同 | 與 Worker 相同 |
+| Gemini 3.8 Flash（Antigravity） | `gemini-3.8-flash-high` · high | `gemini-3.8-flash-medium` · medium | `gemini-3.8-flash-medium` · medium | 與 Worker 相同 | 與 Worker 相同 |
 | Codex | `~/.codex/config.toml` 中的 `model` · high | 與 phase 1 相同 | 同一模型 · medium | 同一模型 · low | 同一模型 · low |
+
+Gemini 的設定檔取決於 Antigravity 目前使用的模型（`~/.gemini/antigravity-cli/settings.json` 中的 `model`）：`Gemini 3.8 Flash ...` 使用 Flash 設定，其他模型或找不到檔案時使用 Gemini 4。
 
 較便宜的模型只用在工作單純、事後還會再檢查的地方：
 - **輕量 Worker**：任務必須是 L 風險、機械性修改（改名、刪死碼、lint/型別修正）、最多 5 個檔案，

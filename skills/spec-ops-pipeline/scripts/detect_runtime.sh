@@ -19,6 +19,9 @@
 # Per-field overrides: SOP_LEAD_MODEL, SOP_LEAD_EFFORT, SOP_LEAD2_MODEL, SOP_LEAD2_EFFORT,
 # SOP_WORKER_MODEL, SOP_WORKER_EFFORT, SOP_WORKER_LIGHT_MODEL, SOP_WORKER_LIGHT_EFFORT,
 # SOP_SCOUT_MODEL, SOP_SCOUT_EFFORT.
+# Gemini profile: the `model` key of ~/.gemini/antigravity-cli/settings.json (display name or
+# id) picks gemini-3.8-flash (Gemini 3.8 Flash...) or gemini-4 (default, also for anything
+# else or a missing file); reported in detected_by as model:<profile>(settings|default).
 # Session split: SOP_SESSION_SPLIT = auto (default: split only runs with an H-risk task,
 # three or more tasks, or staged mode),
 # always, or never; reported as "session_split".
@@ -52,12 +55,19 @@ codex_configured_model() {
   printf '%s' "${model:-$CODEX_DEFAULT_MODEL}"
 }
 
+gemini_configured_model() {
+  local settings="$HOME/.gemini/antigravity-cli/settings.json"
+  [[ -r $settings ]] || return 0
+  # First `"model": "..."` string; never fails the script.
+  awk '/^[[:space:]]*"model"[[:space:]]*:[[:space:]]*"/{sub(/^[^:]*:[[:space:]]*"/, ""); sub(/".*$/, ""); print; exit}' "$settings" 2>/dev/null || true
+}
+
 agent_flag=""
 while (($#)); do
   case $1 in
     --agent) [[ $# -ge 2 ]] || die "--agent needs a value"; agent_flag=$2; shift 2 ;;
     --agent=*) agent_flag=${1#*=}; shift ;;
-    -h|--help) sed -n '2,23p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
 done
@@ -96,19 +106,33 @@ fi
 case $ecosystem in
   claude)
     lead_model=claude-opus-5-5   lead_effort=high   lead_alias=opus
-    lead2_model=claude-sonnet-5-5 lead2_effort=high lead2_alias=sonnet
+    lead2_model=claude-sonnet-5-5 lead2_effort=medium lead2_alias=sonnet
     worker_model=claude-sonnet-5-5 worker_effort=medium
     worker_alias=sonnet
     light_model=claude-haiku-5-5   light_effort=medium light_alias=haiku
-    scout_model=claude-haiku-5-5   scout_effort=low    scout_alias=haiku ;;
+    scout_model=claude-haiku-5-5   scout_effort=medium scout_alias=haiku ;;
   gemini)
     # Antigravity encodes effort in the model id (see `agy models`).
-    lead_model=gemini-4-argon-high     lead_effort=high  lead_alias=$lead_model
-    lead2_model=gemini-3.8-flash-high  lead2_effort=high lead2_alias=$lead2_model
-    worker_model=gemini-3.8-flash-high worker_effort=high
-    worker_alias=gemini-3.8-flash-high
+    gemini_source=default
+    gemini_cfg=$(gemini_configured_model | tr '[:upper:]' '[:lower:]')
+    case $gemini_cfg in
+      "gemini 3.8 flash"*|gemini-3.8-flash*) gemini_profile=gemini-3.8-flash gemini_source=settings ;;
+      "gemini 4"*|gemini-4-*) gemini_profile=gemini-4 gemini_source=settings ;;
+      *) gemini_profile=gemini-4 ;;
+    esac
+    if [[ $gemini_profile == gemini-3.8-flash ]]; then
+      lead_model=gemini-3.8-flash-high   lead_effort=high
+      worker_model=gemini-3.8-flash-medium worker_effort=medium
+    else
+      lead_model=gemini-4-argon-high     lead_effort=high
+      worker_model=gemini-4-hydrogen-medium worker_effort=medium
+    fi
+    lead_alias=$lead_model
+    lead2_model=$worker_model lead2_effort=$worker_effort lead2_alias=$worker_model
+    worker_alias=$worker_model
     light_model=$worker_model light_effort=$worker_effort light_alias=$worker_alias
-    scout_model=$worker_model scout_effort=$worker_effort scout_alias=$worker_alias ;;
+    scout_model=$worker_model scout_effort=$worker_effort scout_alias=$worker_alias
+    detected_by+=";model:$gemini_profile($gemini_source)" ;;
   codex)
     lead_model=$(codex_configured_model) lead_effort=high
     lead_alias=$lead_model

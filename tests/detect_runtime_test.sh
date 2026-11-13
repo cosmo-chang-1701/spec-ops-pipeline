@@ -10,7 +10,7 @@ AGENT=claude; out=$(run)
 check_eq "lead model" "$(json_get '["lead"]["model"]' <<<"$out")" claude-opus-5-5
 check_eq "lead effort" "$(json_get '["lead"]["effort"]' <<<"$out")" high
 check_eq "phase 2 lead model" "$(json_get '["lead_phase2"]["model"]' <<<"$out")" claude-sonnet-5-5
-check_eq "phase 2 lead effort" "$(json_get '["lead_phase2"]["effort"]' <<<"$out")" high
+check_eq "phase 2 lead effort" "$(json_get '["lead_phase2"]["effort"]' <<<"$out")" medium
 check_eq "lead dispatch alias" "$(json_get '["lead"]["dispatch_model"]' <<<"$out")" opus
 check_eq "phase 2 lead dispatch alias" "$(json_get '["lead_phase2"]["dispatch_model"]' <<<"$out")" sonnet
 check_eq "worker model" "$(json_get '["worker"]["model"]' <<<"$out")" claude-sonnet-5-5
@@ -20,19 +20,54 @@ check_eq "light worker model" "$(json_get '["worker_light"]["model"]' <<<"$out")
 check_eq "light worker effort" "$(json_get '["worker_light"]["effort"]' <<<"$out")" medium
 check_eq "light worker dispatch alias" "$(json_get '["worker_light"]["dispatch_model"]' <<<"$out")" haiku
 check_eq "scout model" "$(json_get '["scout"]["model"]' <<<"$out")" claude-haiku-5-5
-check_eq "scout effort" "$(json_get '["scout"]["effort"]' <<<"$out")" low
+check_eq "scout effort" "$(json_get '["scout"]["effort"]' <<<"$out")" medium
 check_eq "scout dispatch alias" "$(json_get '["scout"]["dispatch_model"]' <<<"$out")" haiku
 
-section "gemini defaults"
-AGENT=gemini; out=$(run)
-check_eq "lead model" "$(json_get '["lead"]["model"]' <<<"$out")" gemini-4-argon-high
-check_eq "phase 2 lead model" "$(json_get '["lead_phase2"]["model"]' <<<"$out")" gemini-3.8-flash-high
-check_eq "phase 2 lead effort" "$(json_get '["lead_phase2"]["effort"]' <<<"$out")" high
-check_eq "lead dispatch alias" "$(json_get '["lead"]["dispatch_model"]' <<<"$out")" gemini-4-argon-high
-check_eq "worker model" "$(json_get '["worker"]["model"]' <<<"$out")" gemini-3.8-flash-high
-check_eq "worker dispatch alias" "$(json_get '["worker"]["dispatch_model"]' <<<"$out")" gemini-3.8-flash-high
-check_eq "light worker = worker" "$(json_get '["worker_light"]' <<<"$out")" "$(json_get '["worker"]' <<<"$out")"
-check_eq "scout = worker" "$(json_get '["scout"]' <<<"$out")" "$(json_get '["worker"]' <<<"$out")"
+SETTINGS=$WORK/.gemini/antigravity-cli/settings.json
+mkdir -p "${SETTINGS%/*}"
+# gemini_case <label> <settings content or ""> <profile> <source> <lead model> <worker model> <worker effort>
+gemini_case() {
+  rm -f "$SETTINGS"
+  [[ -z $2 ]] || printf '%s\n' "$2" >"$SETTINGS"
+  AGENT=gemini; out=$(run)
+  local r
+  check_eq "$1: detected_by" "$(json_get '["detected_by"]' <<<"$out")" "flag:--agent;model:$3($4)"
+  check_eq "$1: lead" "$(json_get '["lead"]["model"]' <<<"$out")/$(json_get '["lead"]["effort"]' <<<"$out")/$(json_get '["lead"]["dispatch_model"]' <<<"$out")" "$5/high/$5"
+  for r in lead_phase2 worker worker_light scout; do
+    check_eq "$1: $r" "$(json_get "[\"$r\"][\"model\"]" <<<"$out")/$(json_get "[\"$r\"][\"effort\"]" <<<"$out")/$(json_get "[\"$r\"][\"dispatch_model\"]" <<<"$out")" "$6/$7/$6"
+  done
+}
+section "gemini profiles"
+gemini_case "no settings file" "" gemini-4 default gemini-4-argon-high gemini-4-hydrogen-medium medium
+gemini_case "flash display name" '{
+  "model": "Gemini 3.8 Flash (Low)"
+}' gemini-3.8-flash settings gemini-3.8-flash-high gemini-3.8-flash-medium medium
+gemini_case "gemini 4 display name" '{
+  "model": "Gemini 4 Hydrogen (Medium)"
+}' gemini-4 settings gemini-4-argon-high gemini-4-hydrogen-medium medium
+gemini_case "flash id" '{
+  "model": "gemini-3.8-flash-high"
+}' gemini-3.8-flash settings gemini-3.8-flash-high gemini-3.8-flash-medium medium
+gemini_case "unrecognised model" '{
+  "model": "Claude Opus 5.5 (High)"
+}' gemini-4 default gemini-4-argon-high gemini-4-hydrogen-medium medium
+gemini_case "top-level model wins over a later nested one" '{
+  "model": "Gemini 3.8 Flash (High)",
+  "permissions": {
+    "model": "Gemini 4 Argon (High)"
+  }
+}' gemini-3.8-flash settings gemini-3.8-flash-high gemini-3.8-flash-medium medium
+gemini_case "no model key" '{
+  "colorScheme": "dark"
+}' gemini-4 default gemini-4-argon-high gemini-4-hydrogen-medium medium
+printf '{\n  "model": "Gemini 3.8 Flash (High)"\n}\n' >"$SETTINGS"
+out=$(run SOP_WORKER_MODEL=x)
+check_eq "SOP_WORKER_MODEL beats the profile" "$(json_get '["worker"]["model"]' <<<"$out")" x
+check_eq "profile still applies to the lead" "$(json_get '["lead"]["model"]' <<<"$out")" gemini-3.8-flash-high
+rm -f "$SETTINGS"
+last=$(env -i PATH="$PATH" HOME="$WORK" bash "$D" --help | tail -n 1)
+check_eq "--help ends at the last header line" "${last:0:1}" "#"
+check_eq "--help does not print code" "$(env -i PATH="$PATH" HOME="$WORK" bash "$D" --help | grep -c '^set -euo')" 0
 
 section "codex: phase 2 lead = lead"
 AGENT=codex; out=$(run)
@@ -47,7 +82,7 @@ check_eq "SOP_LEAD2_MODEL" "$(json_get '["lead_phase2"]["model"]' <<<"$out")" cl
 check_eq "SOP_LEAD2_EFFORT" "$(json_get '["lead_phase2"]["effort"]' <<<"$out")" medium
 check_eq "SOP_LEAD2_MODEL sets the dispatch alias" "$(json_get '["lead_phase2"]["dispatch_model"]' <<<"$out")" claude-opus-5-5
 check_eq "SOP_LEAD_MODEL sets the dispatch alias" "$(json_get '["lead"]["dispatch_model"]' <<<"$(run SOP_LEAD_MODEL=sonnet)")" sonnet
-check_eq "SOP_LEAD_EFFORT leaves phase 2 alone" "$(json_get '["lead_phase2"]["effort"]' <<<"$(run SOP_LEAD_EFFORT=max)")" high
+check_eq "SOP_LEAD_EFFORT leaves phase 2 alone" "$(json_get '["lead_phase2"]["effort"]' <<<"$(run SOP_LEAD_EFFORT=max)")" medium
 check_eq "SOP_WORKER_MODEL sets the dispatch alias" "$(json_get '["worker"]["dispatch_model"]' <<<"$out")" haiku
 out=$(run SOP_WORKER_LIGHT_MODEL=sonnet SOP_WORKER_LIGHT_EFFORT=low SOP_SCOUT_MODEL=sonnet SOP_SCOUT_EFFORT=medium)
 check_eq "SOP_WORKER_LIGHT_MODEL sets the dispatch alias" "$(json_get '["worker_light"]["dispatch_model"]' <<<"$out")" sonnet
