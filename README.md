@@ -234,7 +234,7 @@ you to start a fresh session once, and continue with:
 
 ```text
 /clear
-/model sonnet        # the phase 2 Lead model (Claude Code); /effort high
+/model sonnet        # the phase 2 Lead model (Claude Code); /effort medium
 /spec-ops-pipeline resume
 ```
 
@@ -250,9 +250,12 @@ each merged PR. Once you have merged the PRs left to you, finish the cleanup wit
 
 | Ecosystem | Lead · phase 1 (audit, spec) | Lead · phase 2 (dispatch, gate, review) | Worker | Light Worker | Scout |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| Claude (Claude Code) | `claude-opus-5-5` · high | `claude-sonnet-5-5` · high | `claude-sonnet-5-5` · medium | `claude-haiku-5-5` · medium | `claude-haiku-5-5` · low |
-| Gemini (Antigravity) | `gemini-4-argon-high` · high | `gemini-3.8-flash-high` · high | `gemini-3.8-flash-high` · high | same as Worker | same as Worker |
+| Claude (Claude Code) | `claude-opus-5-5` · high | `claude-sonnet-5-5` · medium | `claude-sonnet-5-5` · medium | `claude-haiku-5-5` · medium | `claude-haiku-5-5` · medium |
+| Gemini 4 (Antigravity, default) | `gemini-4-argon-high` · high | `gemini-4-hydrogen-medium` · medium | `gemini-4-hydrogen-medium` · medium | same as Worker | same as Worker |
+| Gemini 3.8 Flash (Antigravity) | `gemini-3.8-flash-high` · high | `gemini-3.8-flash-medium` · medium | `gemini-3.8-flash-medium` · medium | same as Worker | same as Worker |
 | Codex | `model` from `~/.codex/config.toml` · high | same as phase 1 | same model · medium | same model · low | same model · low |
+
+Gemini profile: Antigravity's current model (`model` in `~/.gemini/antigravity-cli/settings.json`) picks the row; `Gemini 3.8 Flash ...` selects the Flash profile, anything else (or no file) selects Gemini 4.
 
 Cheaper models go only where the work is simple and checked afterwards:
 - **Light Worker** — a task gets it only when it is L-risk, mechanical (rename, dead code,
