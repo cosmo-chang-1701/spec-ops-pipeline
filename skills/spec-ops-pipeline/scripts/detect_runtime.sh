@@ -20,16 +20,15 @@
 # SOP_WORKER_MODEL, SOP_WORKER_EFFORT, SOP_WORKER_LIGHT_MODEL, SOP_WORKER_LIGHT_EFFORT,
 # SOP_SCOUT_MODEL, SOP_SCOUT_EFFORT.
 # Gemini profile: the `model` key of ~/.gemini/antigravity-cli/settings.json (display name or
-# id) picks gemini-3.8-flash (Gemini 3.8 Flash...) or gemini-4 (default, also for anything
-# else or a missing file); reported in detected_by as model:<profile>(settings|default).
+# id) picks gemini-3.8-flash (Gemini 3.8 Flash...), claude (Claude...), gemini-4-hydrogen
+# (Gemini 4 Hydrogen...), or gemini-4 (default, also for Gemini 4 Argon... or any unrecognised
+# model or missing file); reported in detected_by as model:<profile>(settings|default).
 # Session split: SOP_SESSION_SPLIT = auto (default: split only runs with an H-risk task,
-# three or more tasks, or staged mode),
-# always, or never; reported as "session_split".
+# three or more tasks, or staged mode), always, or never; reported as "session_split".
 # Output: a single JSON object on stdout.
 set -euo pipefail
 
 readonly VALID_ECOSYSTEMS="claude gemini codex"
-readonly CODEX_DEFAULT_MODEL="gpt-5.4"
 
 die() { printf 'detect_runtime: %s\n' "$*" >&2; exit 2; }
 
@@ -44,15 +43,6 @@ is_valid_ecosystem() { [[ " $VALID_ECOSYSTEMS " == *" $1 "* ]]; }
 has_env_prefix() {
   # Succeeds if any exported variable name matches the ERE (anchored at name start).
   compgen -e | grep -Eq "^($1)"
-}
-
-codex_configured_model() {
-  local config="${CODEX_HOME:-$HOME/.codex}/config.toml" model=""
-  if [[ -r $config ]]; then
-    # Top-level `model = "..."` only (before the first [table] header).
-    model=$(awk '/^\[/{exit} /^[[:space:]]*model[[:space:]]*=/{gsub(/^[^=]*=[[:space:]]*"|".*$/, ""); print; exit}' "$config")
-  fi
-  printf '%s' "${model:-$CODEX_DEFAULT_MODEL}"
 }
 
 gemini_configured_model() {
@@ -116,17 +106,26 @@ case $ecosystem in
     gemini_source=default
     gemini_cfg=$(gemini_configured_model | tr '[:upper:]' '[:lower:]')
     case $gemini_cfg in
-      "gemini 3.8 flash"*|gemini-3.8-flash*) gemini_profile=gemini-3.8-flash gemini_source=settings ;;
-      "gemini 4"*|gemini-4-*) gemini_profile=gemini-4 gemini_source=settings ;;
-      *) gemini_profile=gemini-4 ;;
+      "gemini 3.8 flash"*|gemini-3.8-flash*)   gemini_profile=gemini-3.8-flash  gemini_source=settings ;;
+      "claude"*|claude-*)                      gemini_profile=claude            gemini_source=settings ;;
+      "gemini 4 hydrogen"*|gemini-4-hydrogen*) gemini_profile=gemini-4-hydrogen gemini_source=settings ;;
+      "gemini 4"*|gemini-4-*)                  gemini_profile=gemini-4          gemini_source=settings ;;
+      *)                                       gemini_profile=gemini-4 ;;
     esac
-    if [[ $gemini_profile == gemini-3.8-flash ]]; then
-      lead_model=gemini-3.8-flash-high   lead_effort=high
-      worker_model=gemini-3.8-flash-medium worker_effort=medium
-    else
-      lead_model=gemini-4-argon-high     lead_effort=high
-      worker_model=gemini-4-hydrogen-medium worker_effort=medium
-    fi
+    case $gemini_profile in
+      gemini-3.8-flash)
+        lead_model=gemini-3.8-flash-high     lead_effort=high
+        worker_model=gemini-3.8-flash-medium worker_effort=medium ;;
+      claude)
+        lead_model=claude-opus-5-5-high      lead_effort=high
+        worker_model=claude-sonnet-5-5-medium worker_effort=medium ;;
+      gemini-4-hydrogen)
+        lead_model=gemini-4-hydrogen-high    lead_effort=high
+        worker_model=gemini-4-hydrogen-high  worker_effort=high ;;
+      *)
+        lead_model=gemini-4-argon-high       lead_effort=high
+        worker_model=gemini-4-hydrogen-high  worker_effort=high ;;
+    esac
     lead_alias=$lead_model
     lead2_model=$worker_model lead2_effort=$worker_effort lead2_alias=$worker_model
     worker_alias=$worker_model
@@ -134,13 +133,11 @@ case $ecosystem in
     scout_model=$worker_model scout_effort=$worker_effort scout_alias=$worker_alias
     detected_by+=";model:$gemini_profile($gemini_source)" ;;
   codex)
-    lead_model=$(codex_configured_model) lead_effort=high
-    lead_alias=$lead_model
-    lead2_model=$lead_model              lead2_effort=$lead_effort lead2_alias=$lead_model
-    worker_model=$lead_model             worker_effort=medium
-    worker_alias=$lead_model
-    light_model=$lead_model              light_effort=low light_alias=$lead_model
-    scout_model=$lead_model              scout_effort=low scout_alias=$lead_model ;;
+    lead_model=gpt-6-astra   lead_effort=high     lead_alias=$lead_model
+    lead2_model=gpt-6.1-sol  lead2_effort=medium  lead2_alias=$lead2_model
+    worker_model=gpt-6.1-sol worker_effort=medium worker_alias=$worker_model
+    light_model=gpt-6-luna   light_effort=medium  light_alias=$light_model
+    scout_model=gpt-6-luna   scout_effort=medium  scout_alias=$scout_model ;;
 esac
 
 lead_model=${SOP_LEAD_MODEL:-$lead_model}

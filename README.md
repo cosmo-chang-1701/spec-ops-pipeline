@@ -251,11 +251,13 @@ each merged PR. Once you have merged the PRs left to you, finish the cleanup wit
 | Ecosystem | Lead · phase 1 (audit, spec) | Lead · phase 2 (dispatch, gate, review) | Worker | Light Worker | Scout |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | Claude (Claude Code) | `claude-opus-5-5` · high | `claude-sonnet-5-5` · medium | `claude-sonnet-5-5` · medium | `claude-haiku-5-5` · medium | `claude-haiku-5-5` · medium |
-| Gemini 4 (Antigravity, default) | `gemini-4-argon-high` · high | `gemini-4-hydrogen-medium` · medium | `gemini-4-hydrogen-medium` · medium | same as Worker | same as Worker |
+| Gemini 4 (Antigravity, default) | `gemini-4-argon-high` · high | `gemini-4-hydrogen-high` · high | `gemini-4-hydrogen-high` · high | same as Worker | same as Worker |
+| Gemini 4 Hydrogen (Antigravity) | `gemini-4-hydrogen-high` · high | `gemini-4-hydrogen-high` · high | `gemini-4-hydrogen-high` · high | same as Worker | same as Worker |
+| Claude (Antigravity) | `claude-opus-5-5-high` · high | `claude-sonnet-5-5-medium` · medium | `claude-sonnet-5-5-medium` · medium | same as Worker | same as Worker |
 | Gemini 3.8 Flash (Antigravity) | `gemini-3.8-flash-high` · high | `gemini-3.8-flash-medium` · medium | `gemini-3.8-flash-medium` · medium | same as Worker | same as Worker |
-| Codex | `model` from `~/.codex/config.toml` · high | same as phase 1 | same model · medium | same model · low | same model · low |
+| Codex | `gpt-6-astra` · high | `gpt-6.1-sol` · medium | `gpt-6.1-sol` · medium | `gpt-6-luna` · medium | `gpt-6-luna` · medium |
 
-Gemini profile: Antigravity's current model (`model` in `~/.gemini/antigravity-cli/settings.json`) picks the row; `Gemini 3.8 Flash ...` selects the Flash profile, anything else (or no file) selects Gemini 4.
+Gemini profile: Antigravity's current model (`model` in `~/.gemini/antigravity-cli/settings.json`) picks the row — `Gemini 4 Hydrogen ...` selects `gemini-4-hydrogen` (or set `SOP_LEAD_MODEL=gemini-4-hydrogen-high` when `gemini-4-argon-high` is out of quota or unavailable), `Claude ...` selects `claude`, `Gemini 3.8 Flash ...` selects `gemini-3.8-flash`, and `Gemini 4 ...`, anything else, or no file selects `gemini-4`. In Codex, if `gpt-6-astra` is out of quota or unavailable, fall back to `gpt-6.1-sol` · high for phase 1 Lead via `SOP_LEAD_MODEL=gpt-6.1-sol`.
 
 Cheaper models go only where the work is simple and checked afterwards:
 - **Light Worker** — a task gets it only when it is L-risk, mechanical (rename, dead code,

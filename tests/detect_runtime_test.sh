@@ -38,19 +38,37 @@ gemini_case() {
   done
 }
 section "gemini profiles"
-gemini_case "no settings file" "" gemini-4 default gemini-4-argon-high gemini-4-hydrogen-medium medium
+gemini_case "no settings file" "" gemini-4 default gemini-4-argon-high gemini-4-hydrogen-high high
+gemini_case "gemini 4 argon display name" '{
+  "model": "Gemini 4 Argon (Medium)"
+}' gemini-4 settings gemini-4-argon-high gemini-4-hydrogen-high high
+gemini_case "gemini 4 argon id" '{
+  "model": "gemini-4-argon-high"
+}' gemini-4 settings gemini-4-argon-high gemini-4-hydrogen-high high
+gemini_case "gemini 4 hydrogen display name" '{
+  "model": "Gemini 4 Hydrogen (Medium)"
+}' gemini-4-hydrogen settings gemini-4-hydrogen-high gemini-4-hydrogen-high high
+gemini_case "gemini 4 hydrogen id" '{
+  "model": "gemini-4-hydrogen-high"
+}' gemini-4-hydrogen settings gemini-4-hydrogen-high gemini-4-hydrogen-high high
+gemini_case "claude display name" '{
+  "model": "Claude Opus 5.5 (High)"
+}' claude settings claude-opus-5-5-high claude-sonnet-5-5-medium medium
+gemini_case "claude sonnet display name" '{
+  "model": "Claude Sonnet 5.5 (Medium)"
+}' claude settings claude-opus-5-5-high claude-sonnet-5-5-medium medium
+gemini_case "claude id" '{
+  "model": "claude-sonnet-5-5-medium"
+}' claude settings claude-opus-5-5-high claude-sonnet-5-5-medium medium
 gemini_case "flash display name" '{
   "model": "Gemini 3.8 Flash (Low)"
 }' gemini-3.8-flash settings gemini-3.8-flash-high gemini-3.8-flash-medium medium
-gemini_case "gemini 4 display name" '{
-  "model": "Gemini 4 Hydrogen (Medium)"
-}' gemini-4 settings gemini-4-argon-high gemini-4-hydrogen-medium medium
 gemini_case "flash id" '{
   "model": "gemini-3.8-flash-high"
 }' gemini-3.8-flash settings gemini-3.8-flash-high gemini-3.8-flash-medium medium
 gemini_case "unrecognised model" '{
-  "model": "Claude Opus 5.5 (High)"
-}' gemini-4 default gemini-4-argon-high gemini-4-hydrogen-medium medium
+  "model": "GPT-OSS 120B (Medium)"
+}' gemini-4 default gemini-4-argon-high gemini-4-hydrogen-high high
 gemini_case "top-level model wins over a later nested one" '{
   "model": "Gemini 3.8 Flash (High)",
   "permissions": {
@@ -59,7 +77,7 @@ gemini_case "top-level model wins over a later nested one" '{
 }' gemini-3.8-flash settings gemini-3.8-flash-high gemini-3.8-flash-medium medium
 gemini_case "no model key" '{
   "colorScheme": "dark"
-}' gemini-4 default gemini-4-argon-high gemini-4-hydrogen-medium medium
+}' gemini-4 default gemini-4-argon-high gemini-4-hydrogen-high high
 printf '{\n  "model": "Gemini 3.8 Flash (High)"\n}\n' >"$SETTINGS"
 out=$(run SOP_WORKER_MODEL=x)
 check_eq "SOP_WORKER_MODEL beats the profile" "$(json_get '["worker"]["model"]' <<<"$out")" x
@@ -69,12 +87,14 @@ last=$(env -i PATH="$PATH" HOME="$WORK" bash "$D" --help | tail -n 1)
 check_eq "--help ends at the last header line" "${last:0:1}" "#"
 check_eq "--help does not print code" "$(env -i PATH="$PATH" HOME="$WORK" bash "$D" --help | grep -c '^set -euo')" 0
 
-section "codex: phase 2 lead = lead"
+section "codex defaults"
 AGENT=codex; out=$(run)
-check_eq "codex" "$(json_get '["lead_phase2"]' <<<"$out")" "$(json_get '["lead"]' <<<"$out")"
-check_eq "light worker: same model" "$(json_get '["worker_light"]["model"]' <<<"$out")" "$(json_get '["lead"]["model"]' <<<"$out")"
-check_eq "light worker effort" "$(json_get '["worker_light"]["effort"]' <<<"$out")" low
-check_eq "scout effort" "$(json_get '["scout"]["effort"]' <<<"$out")" low
+check_eq "codex lead" "$(json_get '["lead"]["model"]' <<<"$out")/$(json_get '["lead"]["effort"]' <<<"$out")/$(json_get '["lead"]["dispatch_model"]' <<<"$out")" gpt-6-astra/high/gpt-6-astra
+check_eq "codex lead_phase2" "$(json_get '["lead_phase2"]["model"]' <<<"$out")/$(json_get '["lead_phase2"]["effort"]' <<<"$out")/$(json_get '["lead_phase2"]["dispatch_model"]' <<<"$out")" gpt-6.1-sol/medium/gpt-6.1-sol
+check_eq "codex worker" "$(json_get '["worker"]["model"]' <<<"$out")/$(json_get '["worker"]["effort"]' <<<"$out")/$(json_get '["worker"]["dispatch_model"]' <<<"$out")" gpt-6.1-sol/medium/gpt-6.1-sol
+check_eq "codex worker_light" "$(json_get '["worker_light"]["model"]' <<<"$out")/$(json_get '["worker_light"]["effort"]' <<<"$out")/$(json_get '["worker_light"]["dispatch_model"]' <<<"$out")" gpt-6-luna/medium/gpt-6-luna
+check_eq "codex scout" "$(json_get '["scout"]["model"]' <<<"$out")/$(json_get '["scout"]["effort"]' <<<"$out")/$(json_get '["scout"]["dispatch_model"]' <<<"$out")" gpt-6-luna/medium/gpt-6-luna
+
 
 section "overrides"
 AGENT=claude; out=$(run SOP_LEAD2_MODEL=claude-opus-5-5 SOP_LEAD2_EFFORT=medium SOP_LEAD_EFFORT=max SOP_WORKER_MODEL=haiku)
