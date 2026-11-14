@@ -52,15 +52,14 @@ End with "No findings" if there are none.
 ```
 
 ## Dispatch
-The Critic runs in phase 1. If any task is **H**-risk, use the `lead` model and effort;
-otherwise use `worker`, which is enough to check a plan of L/M tasks and reads the many
-files the critic opens at a fraction of the cost. Never use `worker_light` or `scout`.
+Always use the `lead` block of `detect_runtime.sh` (`lead.model`, `lead.effort`,
+`lead.dispatch_model`):
 
 | Runtime | Call |
 | :--- | :--- |
-| Claude Code | `Agent` with `subagent_type: Plan` (no edit tools), `model` as above (`opus` or `sonnet`), the prompt above. No `isolation`. |
-| Codex | `codex exec -C "<source_worktree>" -m "<critic model>" -c model_reasoning_effort="<critic effort>" -s read-only -o "<run dir>/critic.md" - < "<run dir>/critic-prompt.md"` |
-| Antigravity | `(cd "<source_worktree>" && agy -p "$(cat "<run dir>/critic-prompt.md")" --model "<critic model>" --mode plan --output-format text) > "<run dir>/critic.md"` |
+| Claude Code | `Agent` with `subagent_type: Plan` (no edit tools), `model: <lead.dispatch_model>`, `effort: <lead.effort>`, the prompt above. No `isolation`. |
+| Codex | `codex exec -C "<source_worktree>" -m "<lead.model>" -c model_reasoning_effort="<lead.effort>" -s read-only -o "<run dir>/critic.md" - < "<run dir>/critic-prompt.md"` |
+| Antigravity | `(cd "<source_worktree>" && agy -p "$(cat "<run dir>/critic-prompt.md")" --model "<lead.dispatch_model>" --mode plan --output-format text) > "<run dir>/critic.md"` |
 
 Afterwards re-run the step 0 baseline command on `source_worktree`; it must still match.
 

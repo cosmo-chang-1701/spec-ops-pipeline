@@ -13,9 +13,9 @@
 #
 # Roles: the main thread (Orchestrator) runs on "worker" across all steps; "lead" runs
 # high-reasoning read-only subagents — Planner (step 1-2 audit, gap report, plan & specs),
-# Reviewer of a Worker's diff (step 5), and Plan Critic when any task is H-risk (step 2);
-# "worker" also implements standard tasks and runs the L/M-risk Plan Critic; "worker_light"
-# implements small mechanical L-risk tasks; "scout" sweeps code read-only during the audit.
+# Plan Critic (step 2 adversarial spec review), and Reviewer of a Worker's diff (step 5);
+# "worker" also implements standard tasks; "worker_light" implements small mechanical
+# L-risk tasks; "scout" sweeps code read-only during the audit.
 # Per-field overrides: SOP_LEAD_MODEL, SOP_LEAD_EFFORT, SOP_WORKER_MODEL, SOP_WORKER_EFFORT,
 # SOP_WORKER_LIGHT_MODEL, SOP_WORKER_LIGHT_EFFORT, SOP_SCOUT_MODEL, SOP_SCOUT_EFFORT.
 # Gemini profile: the `model` key of ~/.gemini/antigravity-cli/settings.json (display name or

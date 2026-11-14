@@ -69,7 +69,7 @@ To enforce this, the skill strictly separates responsibilities:
 ### 💡 Lean context window & lower token costs
 - **1-line log compression**: Every test, linter, and build runs through `run_logged.sh`, returning a single summary line (plus log tail only on failure) so verbose test suites never pollute the Lead's context.
 - **Subagent context isolation & persistent run state**: Heavy Phase 1 code reading is offloaded to read-only Scout and Planner subagents, and run state is saved in `<git-common-dir>/sop-run/` so the main thread's context stays clean across the entire run (with optional `/clear` + `resume` session splitting).
-- **Zero-switch model routing**: The main thread stays on the fast, cost-effective `worker` model from start to finish — no manual `/model` switching between phases — while dispatching top-tier `lead` subagents (`Planner`, `Reviewer`, H-risk `Plan Critic`) only where deep reasoning is needed.
+- **Zero-switch model routing**: The main thread stays on the fast, cost-effective `worker` model from start to finish — no manual `/model` switching between phases — while dispatching top-tier `lead` subagents (`Planner`, `Plan Critic`, `Reviewer`) only where deep reasoning is needed.
 
 ### 🔧 Zero-config & layout-aware
 - **Works with your repo as-is**: Automatically adapts to standard git checkouts and bare-repo worktree layouts (`<root>/.bare` + `<root>/main/`), with optional in-place migration (`migrate_to_bare.sh`, dry-run first + automatic rollback) and root-level agent config symlinks.
@@ -249,7 +249,7 @@ each merged PR. Once you have merged the PRs left to you, finish the cleanup wit
 
 ### Default model assignment
 
-| Ecosystem | Main thread (Orchestrator) | `lead` subagents (Planner, Reviewer, H-risk Critic) | `worker` subagents (Standard Worker, L/M Critic) | Light Worker | Scout |
+| Ecosystem | Main thread (Orchestrator) | `lead` subagents (Planner, Plan Critic, Reviewer) | `worker` subagents (Standard Worker) | Light Worker | Scout |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | Claude (Claude Code) | `claude-sonnet-5-5` · medium | `claude-opus-5-5` · high | `claude-sonnet-5-5` · medium | `claude-haiku-5-5` · medium | `claude-haiku-5-5` · medium |
 | Gemini 4 (Antigravity, default) | `gemini-4-hydrogen-high` · high | `gemini-4-argon-high` · high | `gemini-4-hydrogen-high` · high | same as Worker | same as Worker |
@@ -265,10 +265,10 @@ Each phase dispatches the right model for the job while keeping the main thread 
   and drafts the execution plan and Worker specs ([planner.md](skills/spec-ops-pipeline/references/planner.md)); the main
   thread verifies every cited `file:line`, saves the files, and runs the overlap and DoD
   checks.
+- **Plan Critic** — a read-only subagent on the `lead` model challenges the specs and
+  execution plan before the checkpoint ([plan-critic.md](skills/spec-ops-pipeline/references/plan-critic.md)).
 - **Reviewer** — the read-only subagent that reviews each Worker's diff always runs on the
   `lead` model; the main thread verifies its findings.
-- **Plan Critic** — runs on the `lead` model only when a task is H-risk, otherwise on the
-  `worker` model.
 - **Light Worker** — a task gets it only when it is L-risk, mechanical (rename, dead code,
   lint/type fixes), touches at most 5 files, and has a DoD that can tell fixed from unfixed.
   The tier shows in the checkpoint's decision matrix, and a light task that fails its first
