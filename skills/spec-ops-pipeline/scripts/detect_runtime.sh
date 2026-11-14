@@ -7,9 +7,7 @@
 #   1. --agent flag            (the running agent knows who it is; most reliable)
 #   2. SOP_ECOSYSTEM env var   (user override)
 #   3. Runtime markers         (env vars injected by the agent CLI itself)
-#   4. API keys                (only when exactly ONE provider key is present;
-#                               several keys at once are common and ambiguous)
-#   5. Fallback                (claude)
+#   4. Fallback                (claude; provider API keys are deliberately not read)
 #
 # Roles: the main thread (Orchestrator) runs on "worker" across all steps; "lead" runs
 # high-reasoning read-only subagents — Planner (step 1-2 audit, gap report, plan & specs),
@@ -57,7 +55,7 @@ while (($#)); do
   case $1 in
     --agent) [[ $# -ge 2 ]] || die "--agent needs a value"; agent_flag=$2; shift 2 ;;
     --agent=*) agent_flag=${1#*=}; shift ;;
-    -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
 done
@@ -82,15 +80,7 @@ elif has_env_prefix 'CODEX_(SANDBOX|THREAD_ID|SESSION|MANAGED)'; then
 elif has_env_prefix 'ANTIGRAVITY_|AGY_|JETSKI|GEMINI_CLI'; then
   ecosystem=gemini detected_by="runtime:antigravity-or-gemini-cli"
 else
-  keys=()
-  [[ -n ${ANTHROPIC_API_KEY:-} ]] && keys+=(claude)
-  [[ -n ${GOOGLE_API_KEY:-}${GEMINI_API_KEY:-} ]] && keys+=(gemini)
-  [[ -n ${OPENAI_API_KEY:-} ]] && keys+=(codex)
-  if ((${#keys[@]} == 1)); then
-    ecosystem=${keys[0]} detected_by="api-key:single"
-  else
-    ecosystem=claude detected_by="fallback(api-keys=${#keys[@]})"
-  fi
+  ecosystem=claude detected_by="fallback"
 fi
 
 case $ecosystem in

@@ -38,7 +38,7 @@ case $agent in claude|gemini|codex) ;; *) die "--agent claude|gemini|codex is re
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/sop-preflight.XXXXXX")
-trap 'rm -rf "$tmp"' EXIT
+trap 'rm -r -- "$tmp"' EXIT
 
 # run <key> <cmd>...: stdout -> $tmp/<key>.out, stderr -> $tmp/<key>.err, exit code kept.
 run() {

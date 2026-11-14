@@ -162,7 +162,7 @@ for f in CLAUDE.md AGENTS.md GEMINI.md .claude .agents .codex .gemini; do
   [[ -L $f ]] && rm "$f"                         # agent-config symlinks at the root
 done
 admin=$(sed -n 's/^gitdir: //p' main/.git)       # .bare/worktrees/main
-rm main/.git && mv "$admin/index" .bare/index && rm -rf "$admin"
+rm main/.git && mv "$admin/index" .bare/index && rm -r "$admin"
 git --git-dir=.bare config core.bare false && rm .git && mv .bare main/.git
 mv main .sop-undo && (shopt -s dotglob && mv .sop-undo/* .) && rmdir .sop-undo
 git status

@@ -260,7 +260,7 @@ rollback() {
   ((STAGE >= 7)) && [[ -f $TMP/.git ]] && { rm -f "$TMP/.git" || ok=1; }
   if ((STAGE >= 6)); then
     [[ -f $WT/.git ]] && rm -f "$WT/.git"
-    [[ $ADMIN == "$BARE"/worktrees/* ]] && { rm -rf "$ADMIN" || ok=1; }
+    [[ $ADMIN == "$BARE"/worktrees/* ]] && { rm -r -- "$ADMIN" || ok=1; }
     rmdir "$BARE/worktrees" 2>/dev/null   # only if this run created it (no linked worktrees)
   fi
   if ((STAGE >= 5)); then
@@ -298,7 +298,7 @@ Restore by hand, in this order, skipping steps whose source does not exist:$(
   [[ -z $links ]] || printf '\n  0. rm -f%s   (agent-config symlinks)' "$links")
   1. mv -f $ADMIN/{index,ORIG_HEAD,config.worktree,logs/HEAD} $BARE/...   (whichever exist)
   2. mv $WT $TMP ; rm -f $TMP/.git          (only if $TMP/.git is a file)
-  3. rm -rf $ADMIN ; rm -f $REPO/.git      (only if $REPO/.git is a file)
+  3. rm -r $ADMIN ; rm -f $REPO/.git      (only if $REPO/.git is a file)
   4. git --git-dir=$BARE config core.bare false ; mv $BARE $REPO/.git
   5. mv $TMP/* $TMP/.[!.]* $REPO/ ; rmdir $TMP
   6. git -C $REPO worktree repair ; git -C $REPO status

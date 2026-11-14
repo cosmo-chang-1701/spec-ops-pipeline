@@ -114,7 +114,7 @@ its own consent at close-out. Record the approval in `state.json` (§7) so a pha
 `auto_merge_risk` in `worktree.sh config` lists the Risk levels whose PRs the Lead merges after
 opening them; every APPROVEd task gets a PR either way. Default `["L", "M"]`: only H-risk PRs
 are left for the user. Set by `autoMergeRisk` in the user config
-(`~/.config/spec-ops-pipeline/config.json`), overridden by the repo's
+(`spec-ops-pipeline/config.json` under `$XDG_CONFIG_HOME`), overridden by the repo's
 `.agents/spec-ops-pipeline.json`, overridden by env `SOP_AUTO_MERGE_RISK` (`L,M`, or `none`);
 `config_file` and `user_config_file` say which files were read. `[]` = the user merges every PR.
 

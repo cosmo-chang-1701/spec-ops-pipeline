@@ -46,7 +46,7 @@ default-branch worktree or the container root) with keys `worktreeRoot`, `pathSt
 `SOP_MERGE_METHOD`) and `autoCleanup` (default `true`; env `SOP_AUTO_CLEANUP=1|0`); see
 `worktree.sh --help`. The repo-independent keys (`maxParallel`, `workerNotes`,
 `offerBareLayout`, `autoMergeRisk`, `mergeMethod`, `autoCleanup`) can also be set for every repo
-in the user config, `~/.config/spec-ops-pipeline/config.json` (`$XDG_CONFIG_HOME`, env
+in the user config, `spec-ops-pipeline/config.json` under `$XDG_CONFIG_HOME` (default: `$HOME` + `/.config`; env
 `SOP_USER_CONFIG`); the repo config wins key by key.
 `pr.sh` reads `SOP_PR_TIMEOUT` (seconds to wait for checks, default 1800) and
 `SOP_PR_CHECKS_DELAY` (default 20).

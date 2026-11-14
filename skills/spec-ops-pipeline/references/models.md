@@ -2,7 +2,7 @@
 
 `bash SKILL_DIR/scripts/detect_runtime.sh --agent <claude|gemini|codex>` prints one block per
 role. Pass **your own runtime** (you know which CLI you are running in; the flag beats env
-heuristics — e.g. a Claude Code session may also have `GEMINI_API_KEY` set).
+heuristics — e.g. a Claude Code session may also run next to other agents' env markers).
 
 ## Roles and defaults
 
