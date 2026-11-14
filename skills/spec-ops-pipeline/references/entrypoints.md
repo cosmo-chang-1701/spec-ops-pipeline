@@ -8,7 +8,7 @@ and the user chooses to resume. Do not redo steps 0–2.
 1. `preflight.sh --agent <claude|gemini|codex> --fetch` as in [step 0](../SKILL.md#0-preflight);
    use only `runtime`, `run`, `baseline`, `base_check` and `leftovers`, only to compare them
    with `state.json`: do not apply the step 0 actions (no "resume?" question, no new
-   baseline or approval written into the state). Check you are on the `lead_phase2`
+   baseline or approval written into the state). Check you are on the `worker`
    model. `run.run_dir` → `run_dir`.
 2. Read `state.json` and `plan.md`, then only the specs and whitelists of `current_stage`
    (not the gap report; read it only if a finding's wording is needed to decide something).

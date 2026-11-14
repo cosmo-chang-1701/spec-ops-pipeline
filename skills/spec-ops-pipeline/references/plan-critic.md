@@ -52,9 +52,9 @@ End with "No findings" if there are none.
 ```
 
 ## Dispatch
-The Critic runs in phase 1. If any task is **H**-risk, use the phase 1 Lead model and effort
-(`lead`); otherwise use `lead_phase2`, which is enough to check a plan of L/M tasks and reads
-the many files the critic opens at a fraction of the cost. Never use a Worker or scout model.
+The Critic runs in phase 1. If any task is **H**-risk, use the `lead` model and effort;
+otherwise use `worker`, which is enough to check a plan of L/M tasks and reads the many
+files the critic opens at a fraction of the cost. Never use `worker_light` or `scout`.
 
 | Runtime | Call |
 | :--- | :--- |

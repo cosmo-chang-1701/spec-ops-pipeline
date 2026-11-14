@@ -8,13 +8,12 @@ heuristics — e.g. a Claude Code session may also have `GEMINI_API_KEY` set).
 
 | Role | Runs | Claude (Claude Code) | Gemini (Antigravity) | Codex |
 | :--- | :--- | :--- | :--- | :--- |
-| `lead` | Phase 1: preflight, audit, spec, checkpoint | `claude-opus-5-5` · high | `gemini-4-argon-high` · high | `gpt-6-astra` · high |
-| `lead_phase2` | Phase 2: dispatch, gate, review, close-out | `claude-sonnet-5-5` · medium | `gemini-4-hydrogen-high` · high | `gpt-6.1-sol` · medium |
-| `worker` | Standard tasks | `claude-sonnet-5-5` · medium | `gemini-4-hydrogen-high` · high | `gpt-6.1-sol` · medium |
+| Lead (main thread) | Steps 0–6 orchestration, test/DoD runs, subagent disposition, worktrees, PRs | `worker` (`claude-sonnet-5-5` · medium) | `worker` (`gemini-4-hydrogen-high` · high) | `worker` (`gpt-6.1-sol` · medium) |
+| `lead` | Planner ([planner.md](planner.md)) & Reviewer ([review-checklist.md](review-checklist.md#reviewer-subagent)) subagents | `claude-opus-5-5` · high | `gemini-4-argon-high` · high | `gpt-6-astra` · high |
+| `worker` | Main thread · standard Worker tasks | `claude-sonnet-5-5` · medium | `gemini-4-hydrogen-high` · high | `gpt-6.1-sol` · medium |
 | `worker_light` | Light tasks ([tiers](#worker-tier)) | `claude-haiku-5-5` · medium | same as `worker` | `gpt-6-luna` · medium |
 | `scout` | Read-only audit sweeps ([scout.md](scout.md)) | `claude-haiku-5-5` · medium | same as `worker` | `gpt-6-luna` · medium |
-| Reviewer | Read-only review of a Worker's diff ([review-checklist.md](review-checklist.md#reviewer-subagent)) | `lead` | `lead` | `lead` |
-| Plan Critic | [plan-critic.md](plan-critic.md) | `lead` if any task is H-risk, else `lead_phase2` | same rule | same rule |
+| Plan Critic | [plan-critic.md](plan-critic.md) | `lead` if any task is H-risk, else `worker` | same rule | same rule |
 
 The Gemini column is the `gemini-4` profile (default). The `model` key of
 `~/.gemini/antigravity-cli/settings.json` (display name or id) selects the Antigravity profile;
@@ -32,12 +31,11 @@ The Gemini column is the `gemini-4` profile (default). The `model` key of
 In Codex, if `gpt-6-astra` is out of quota or unavailable, fall back to `gpt-6.1-sol` · high
 for `lead` via `SOP_LEAD_MODEL=gpt-6.1-sol`.
 
-Switching to the Lead model of the current phase: [SKILL.md](../SKILL.md#model-assignment).
+Switching to the main-thread (`worker`) model: [SKILL.md](../SKILL.md#model-assignment).
 Unknown ecosystems fall back to the Claude column. Each block also has `dispatch_model`, the
-value to pass to the runtime's dispatch call (`opus`, `sonnet`, `haiku` in Claude Code). A
-`single`-session run needs no Reviewer subagent: the Lead already runs on `lead`.
+value to pass to the runtime's dispatch call (`opus`, `sonnet`, `haiku` in Claude Code).
 
-Overrides: `SOP_LEAD_MODEL`, `SOP_LEAD_EFFORT`, `SOP_LEAD2_MODEL`, `SOP_LEAD2_EFFORT`,
+Overrides: `SOP_LEAD_MODEL`, `SOP_LEAD_EFFORT`,
 `SOP_WORKER_MODEL`, `SOP_WORKER_EFFORT`, `SOP_WORKER_LIGHT_MODEL`, `SOP_WORKER_LIGHT_EFFORT`,
 `SOP_SCOUT_MODEL`, `SOP_SCOUT_EFFORT`. Setting a model also sets its `dispatch_model`.
 

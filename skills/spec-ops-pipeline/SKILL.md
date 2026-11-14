@@ -27,20 +27,24 @@ description: >-
 Tempted to "just fix it"? Write a spec.
 
 ## Model assignment
-Preflight `runtime` gives the models per role (`lead` = phase 1, `lead_phase2`,
-`worker`, `worker_light`, `scout`); the Reviewer runs on `lead`. Roles, defaults,
-overrides, tiers: [models.md](references/models.md). If you are not on the Lead model of
-the current phase, tell the user how to switch (`/model`, `/effort` in Claude Code); do not
-silently continue — except a `single` run, which keeps the phase 1 Lead model.
+Preflight `runtime` gives the models per role (`lead`, `worker`, `worker_light`,
+`scout`). The main thread (Orchestrator / Lead) always runs on `worker`; each phase
+dispatches subagents on the matching model (`lead` for the Planner, Reviewer, and H-risk
+Plan Critic; `worker` for standard Workers and L/M-risk Plan Critic; `worker_light` for
+light Workers; `scout` for audit sweeps). Roles, defaults, overrides, tiers:
+[models.md](references/models.md). If you are not on the `worker` model, tell the user how
+to switch (`/model`, `/effort` in Claude Code); do not silently continue.
 
 ## Sessions and context
-- **Phase 1**: steps 0–2 on the phase 1 Lead model.
-- **Phase 2**: steps 3–6. `split`: starts with [Resume](#resume-phase-2) in a **fresh
-  session** on the phase 2 Lead model, reading only plan, state and the current stage's
-  specs (self-contained). `single`: continues in the same session.
+- **Phase 1**: steps 0–2 on the `worker` main thread (heavy code reading is isolated inside
+  the `scout` and `lead` Planner subagents).
+- **Phase 2**: steps 3–6 on the `worker` main thread. `single` (default): continues in the
+  same session right after approval. `split`: starts with [Resume](#resume-phase-2) in a
+  **fresh session** on the `worker` model, reading only plan, state and the current stage's
+  specs (self-contained).
 
-`session_split` (env `SOP_SESSION_SPLIT`): `auto` (default) = `split` for any H-risk task,
-three or more tasks, or `staged` mode, else `single`; `always` → `split`; `never` → `single`.
+`session_split` (env `SOP_SESSION_SPLIT`): `never` (default) → `single`; `always` → `split`;
+`auto` = `split` for any H-risk task, three or more tasks, or `staged` mode, else `single`.
 
 The checkpoint shows it; the user may override.
 
@@ -80,31 +84,31 @@ commands inside `source_worktree`. Act on:
 
 ### 1. Audit (read-only)
 - Establish scope with the user (paths; security / perf / debt / spec gaps).
-- Scan statically; for a large scope first sweep with parallel read-only scouts
-  ([scout.md](references/scout.md)) and verify their leads. Run the project's existing
-  lint/test/type-check commands for ground truth via `run_logged.sh` (logs `audit-<n>.log`);
-  do not install tools or change config.
-- Produce a **gap report**: numbered findings with `file:line`, severity, evidence, proposed
-  fix. Group them into Worker-sized tasks with small non-overlapping whitelists.
-- With several tasks, draft the **execution plan** per
-  [execution-plan.md](references/execution-plan.md): no dependencies → `independent` (all
-  parallel); related → `staged` (dependency-ordered stages, parallel within a
-  stage, each built on the previous stage's integrated result).
+- Run the project's existing lint/test/type-check commands for ground truth via
+  `run_logged.sh` (logs `audit-<n>.log`); do not install tools or change config.
+- For a large scope (> ~30 tracked files or 2+ top-level directories), first sweep with
+  parallel read-only scouts ([scout.md](references/scout.md)).
+- Collect **Repo rules** from the agent docs (`AGENTS.md`, `CLAUDE.md`, also in directories
+  the scope touches), known repo pitfalls, and `worker_notes`, write
+  `<run dir>/planner-input.md`, and dispatch a read-only **Planner** subagent on the `lead`
+  model ([planner.md](references/planner.md)) to produce:
+  - the **gap report**: numbered findings with `file:line`, severity, evidence, proposed fix;
+  - the **execution plan** ([execution-plan.md](references/execution-plan.md)): `independent`
+    (all parallel) or `staged` (dependency-ordered stages, parallel within a stage);
+  - each task's **Worker spec** and **whitelist** ([worker-spec-template.md](references/worker-spec-template.md))
+    with its Worker tier ([models.md](references/models.md#worker-tier)) and runnable DoD commands.
 
 ### 2. Spec (checkpoint)
-- For each task fill [worker-spec-template.md](references/worker-spec-template.md) and pick its
-  Worker tier ([models.md](references/models.md#worker-tier)). Fill **Repo rules** from the
-  agent docs (`AGENTS.md`, `CLAUDE.md`, also in directories the whitelist touches): test/lint
-  commands, flags, language rules; add repo pitfalls from your memory and any `worker_notes`.
-  Workers cannot see your context. Write DoD commands as those rules require.
-- Save to the run dir, never a worktree: `gap-report.md`, `plan.md`, `spec-<slug>.md`, `<slug>.wl`.
+- Verify each finding's cited `file:line` in `source_worktree` per
+  [planner.md](references/planner.md#lead-disposition) and save `gap-report.md`, `plan.md`,
+  `spec-<slug>.md`, `<slug>.wl` to the run dir, never a worktree.
 - **Overlap check** per stage: `bash SKILL_DIR/scripts/check_scope.sh --overlap
   <source_worktree> <slug>.wl...`; `OVERLAP` → re-split or re-stage; check each `POSSIBLE` by hand.
 - **DoD dry run**: run each DoD command of `independent` / stage-1 tasks in `source_worktree`
   through `run_logged.sh` (logs `<slug>-dry-<n>.log`), note its class in the spec, fix `BROKEN`
   ones ([details](references/worker-spec-template.md#dod-dry-run)); stage 2+ at step 3.
 - **Plan Critic**: with 2+ tasks, `staged` mode, an H-risk task, or on request: a read-only
-  critic (`lead` model only if a task is H-risk, else `lead_phase2`); decide on each
+  critic (`lead` model only if a task is H-risk, else `worker`); decide on each
   finding per [plan-critic.md](references/plan-critic.md). One round.
 - **Show the checkpoint report and wait for approval** before step 3, in the format of
   [execution-plan.md §3](references/execution-plan.md#3-checkpoint-report). The approval must explicitly cover:
@@ -113,13 +117,12 @@ commands inside `source_worktree`. Act on:
   after each merge; and, when the Docker pool line says `prune: ask`, `worktree.sh pool --prune`. Wording in §3.
 - **Phase boundary**: after approval write `<run dir>/state.json`
   ([§7](references/execution-plan.md#7-run-state)) with `phase: 2` and the agreed `session`, then:
+  - `single`: tell the user the plan is saved to `<run dir>` and the run continues here; go to step 3 (`resume` still works).
   - `split`, tell the user:
-    > Plan approved and saved to `<run dir>`. Run `/clear`, switch to the phase 2 Lead
-    > (`/model <lead_phase2.model>`, `/effort <lead_phase2.effort>`), then invoke this skill
+    > Plan approved and saved to `<run dir>`. Run `/clear`, then invoke this skill
     > with `resume`.
 
-    (Codex / Antigravity: start a new session on `lead_phase2`.)
-  - `single`: tell the user the plan is saved to `<run dir>` and the run continues here; go to step 3 without switching models (`resume` still works).
+    (Codex / Antigravity: start a new session on `worker`.)
 
 ### Resume (phase 2)
 On `resume`: [entrypoints.md](references/entrypoints.md#resume-phase-2).
@@ -152,8 +155,9 @@ deferral, and the stage when integrated.
    `<slug>-gate-r<round>-<n>.log`); all must exit 0.
 
 ### 5. Review (per task) + stage barrier
-Follow [review-checklist.md](references/review-checklist.md): the diff is reviewed on
-the `lead` model (`split`: read-only Reviewer subagent, you verify its findings; `single`: you) against the recorded base. Issue APPROVE or REQUEST_CHANGES with numbered `file:line`
+Follow [review-checklist.md](references/review-checklist.md): the diff is reviewed by a
+read-only **Reviewer** subagent on the `lead` model (you verify its findings) against the
+recorded base. Issue APPROVE or REQUEST_CHANGES with numbered `file:line`
 findings; loop with the Worker at most **3 rounds**, then escalate to the user.
 Tasks loop independently. A `light` task failing round 1 is re-dispatched on the
 `worker` model ([models.md](references/models.md#worker-tier)).

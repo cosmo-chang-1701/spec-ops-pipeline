@@ -64,8 +64,8 @@
 
 ### 💡 極致精簡 Context 視窗並節省 Token 成本
 - **單行 Log 濃縮機制**：所有 test、lint 與 build 指令皆透過 `run_logged.sh` 執行，只回傳一行執行摘要（僅在失敗時附上最後幾行 log），避免冗長的測試輸出塞爆 Lead 的 context。
-- **兩階段 Session 切分**：含 H 風險任務、3 個以上任務或分階段的流程會將狀態保存在 `<git-common-dir>/sop-run/`，讓規劃（Phase 1）與執行（Phase 2）分開在不同 session 進行，維持最佳推理品質。
-- **依任務性質自動分配最佳模型**：自動偵測 Claude Code、Codex CLI 或 Antigravity 環境，在 Phase 1 採用高階推理模型做稽核與規格設計，在 Phase 2 與 Worker 採用快速、高性價比的模型執行實作。
+- **Subagent Context 隔離與持久化狀態**：Phase 1 的重度讀檔完全交由唯讀的 Scout 與 Planner subagent 處理，並將執行狀態保存在 `<git-common-dir>/sop-run/`，讓主線程的 context 從頭到尾保持乾淨（亦支援隨時 `/clear` + `resume` 接續）。
+- **零模型切換、依階段派發最佳模型**：主線程全程固定使用快速、高性價比的 `worker` 模型——各階段之間完全不需要手動切換 `/model`——只在需要深度推理的節點（`Planner` 規劃、`Reviewer` 審查、H 風險 `Plan Critic`）派發高階 `lead` subagent。
 
 ### 🔧 零設定且自動適應 Repo 佈局
 - **免設定直接套用**：自動偵測一般 repo 與 bare-repo worktree 佈局（`<root>/.bare` + `<root>/main/`），並提供安全的就地轉換工具（`migrate_to_bare.sh`，先 dry-run、失敗自動 rollback）與根目錄 agent 設定 symlink。
@@ -74,39 +74,30 @@
 
 ```mermaid
 flowchart LR
-    subgraph P1[Phase 1 · 第一個 session]
-    A[0. 前置檢查] --> B[1. 稽核<br/>唯讀]
-    B --> C[2. Spec<br/>預檢 + Critic<br/>使用者核准]
+    subgraph P1["Phase 1 · 稽核與規劃"]
+    A[0. 前置檢查] --> B["1. 稽核<br/>Planner subagent (lead)"]
+    B --> C["2. Spec<br/>預檢 + Critic<br/>使用者核准"]
     end
-    C -->|state.json<br/>/clear + resume| R[接續]
-    subgraph P2[Phase 2 · 新的 session]
-    R --> D[3. Worktree<br/>+ 派工]
-    D --> E[4. 檢查<br/>範圍 + DoD]
-    E --> F[5. 審查<br/>最多 3 輪]
+    C -->|state.json<br/>同 session 繼續或 resume| D["3. Worktree<br/>+ 派工 (worker)"]
+    subgraph P2["Phase 2 · 執行與審查"]
+    D --> E["4. 檢查<br/>範圍 + DoD"]
+    E --> F["5. 審查<br/>Reviewer subagent (lead)"]
     F -->|REQUEST_CHANGES| D
     F -->|下一階段| D
-    F -->|APPROVE| PR[Commit + PR<br/>依 autoMergeRisk 合併]
+    F -->|APPROVE| PR["Commit + PR<br/>依 autoMergeRisk 合併"]
     PR --> G[6. 收尾]
     end
 ```
 
-1. **前置檢查**：偵測執行環境與 worktree 佈局、檢查先前遺留的任務、記錄 Lead checkout 的基準狀態。
-2. **稽核**：掃描議定的範圍，執行既有的 lint / test / type-check 指令，撰寫缺口報告，並將發現
-   分組為白名單小且互不重疊的任務。
-3. **Spec**：為每個任務填寫 [spec 範本](skills/spec-ops-pipeline/references/worker-spec-template.md)，並擬定
-   [執行計畫](skills/spec-ops-pipeline/references/execution-plan.md)（`independent` 或 `staged`）。接著檢查白名單是否
-   重疊、預先執行每條 DoD 指令以找出無效或無法達成的指令；任務較多或風險較高時，再由唯讀的
-   [Plan Critic](skills/spec-ops-pipeline/references/plan-critic.md) 挑戰 spec。呈報時先給使用者決策矩陣（各任務的範圍、
-   風險與共用資源），再附完整 spec。**使用者核准前不會派出任何 Worker。**
-   核准後，Lead 把 `state.json` 寫入 run dir 並結束 phase 1：執行 `/clear`、切換到 phase 2 的
-   Lead 模型，再以 `resume` 呼叫本 skill。新的 session 會先核對基準狀態與 base commit，只讀取
-   執行計畫與當前階段的 spec，然後接續執行。小型流程（`independent` 模式下 1–2 個 L/M 風險任務）則不換 session，
-   直接以 phase 1 的 Lead 模型繼續；可設定 `SOP_SESSION_SPLIT=always|never`，或在核准時說明來改變。
+1. **前置檢查**：偵測執行環境與 worktree 佈局、確認主線程運行於 `worker` 模型、檢查先前遺留的任務、記錄 Lead checkout 的基準狀態。
+2. **稽核**：透過 `run_logged.sh` 執行既有的 lint / test / type-check 指令（大範圍時先由唯讀 [Scout](skills/spec-ops-pipeline/references/scout.md) 平行掃描），接著派發 `lead` 模型的唯讀 [Planner subagent](skills/spec-ops-pipeline/references/planner.md) 產出缺口報告、[執行計畫](skills/spec-ops-pipeline/references/execution-plan.md)（`independent` 或 `staged`）以及各任務的 [Worker spec](skills/spec-ops-pipeline/references/worker-spec-template.md) 與白名單。
+3. **Spec**：主線程查驗每筆發現的 `file:line` 證據並寫入 run dir，接著檢查白名單是否重疊、預先執行每條 DoD 指令以找出無效或無法達成的指令；任務較多或風險較高時，再由唯讀的 [Plan Critic](skills/spec-ops-pipeline/references/plan-critic.md) 挑戰 spec。呈報時先給使用者決策矩陣（各任務的範圍、風險與共用資源），再附完整 spec。**使用者核准前不會派出任何 Worker。**
+   核准後，主線程把 `state.json` 寫入 run dir，並預設在同一個 session 直接進入步驟 3（`single`，因為 Phase 1 的大量讀檔已隔離在 Planner subagent 內，且主線程本來就是 `worker` 模型）。若想在新的 session 執行 phase 2，可設定 `SOP_SESSION_SPLIT=always`（或 `auto`，或在核准時說明），執行 `/clear` 後以 `/spec-ops-pipeline resume` 接續。
 4. **Worktree + 派工**：為每個任務在 `sop/<slug>` 分支上建立 worktree，並平行派出該階段的
    Worker（詳見 [dispatch.md](skills/spec-ops-pipeline/references/dispatch.md)）。
 5. **檢查**：執行 `check_scope.sh`，再透過 `run_logged.sh` 重新執行所有 DoD 指令，全部都必須通過。
 6. **審查**：依照[審查清單](skills/spec-ops-pipeline/references/review-checklist.md)，對照記錄的基準審查 diff：
-   由 phase 1 Lead 模型的唯讀 Reviewer subagent 進行審查，Lead 再驗證它的意見。APPROVE 後，
+   由 `lead` 模型的唯讀 Reviewer subagent 進行審查，主線程再查驗它的意見。APPROVE 後，
    任務會自動 commit、push 並開 PR，`autoMergeRisk` 允許時再合併該 PR（[規則](#自動合併模式)）。
    在 staged 模式下，核准的任務會先在本機 commit 並合併到 `sop-stage/<n>`，才進入下一階段，
    最後一個階段整合成單一 PR；階段之間預設留在同一個 session，只有 context 明顯變大時 Lead 才會提議換新 session。
@@ -209,12 +200,10 @@ ln -s ~/src/spec-ops-pipeline/skills/spec-ops-pipeline \
 ```
 
 一般流程會停下來等你兩次：一次是議定稽核範圍，一次是核准缺口報告、spec 與執行計畫。
-核准之後，1–2 個 L/M 風險任務會直接在同一個 session 繼續；含 H 風險任務、3 個以上任務或
-分階段的流程，Lead 會請你開一次新的 session 接續：
+由於主線程固定使用 `worker` 模型，且 Phase 1 的大量讀檔已隔離在 `lead` Planner subagent 內，核准後預設會在同一個 session 直接繼續執行。若你設定開啟新的 phase 2 session（`SOP_SESSION_SPLIT=always` 或 `auto`），或要接續中斷的流程，請執行：
 
 ```text
 /clear
-/model sonnet        # phase 2 的 Lead 模型（Claude Code）；/effort medium
 /spec-ops-pipeline resume
 ```
 
@@ -227,27 +216,27 @@ ln -s ~/src/spec-ops-pipeline/skills/spec-ops-pipeline \
 
 ### 預設模型分配
 
-| 生態系 | Lead · phase 1（稽核、spec） | Lead · phase 2（派工、檢查、審查） | Worker | 輕量 Worker | Scout |
+| 生態系 | 主線程（Orchestrator） | `lead` subagents（Planner、Reviewer、H 風險 Critic） | `worker` subagents（標準 Worker、L/M Critic） | 輕量 Worker | Scout |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| Claude（Claude Code） | `claude-opus-5-5` · high | `claude-sonnet-5-5` · medium | `claude-sonnet-5-5` · medium | `claude-haiku-5-5` · medium | `claude-haiku-5-5` · medium |
-| Gemini 4（Antigravity，預設） | `gemini-4-argon-high` · high | `gemini-4-hydrogen-high` · high | `gemini-4-hydrogen-high` · high | 與 Worker 相同 | 與 Worker 相同 |
+| Claude（Claude Code） | `claude-sonnet-5-5` · medium | `claude-opus-5-5` · high | `claude-sonnet-5-5` · medium | `claude-haiku-5-5` · medium | `claude-haiku-5-5` · medium |
+| Gemini 4（Antigravity，預設） | `gemini-4-hydrogen-high` · high | `gemini-4-argon-high` · high | `gemini-4-hydrogen-high` · high | 與 Worker 相同 | 與 Worker 相同 |
 | Gemini 4 Hydrogen（Antigravity） | `gemini-4-hydrogen-high` · high | `gemini-4-hydrogen-high` · high | `gemini-4-hydrogen-high` · high | 與 Worker 相同 | 與 Worker 相同 |
-| Claude（Antigravity） | `claude-opus-5-5-high` · high | `claude-sonnet-5-5-medium` · medium | `claude-sonnet-5-5-medium` · medium | 與 Worker 相同 | 與 Worker 相同 |
-| Gemini 3.8 Flash（Antigravity） | `gemini-3.8-flash-high` · high | `gemini-3.8-flash-medium` · medium | `gemini-3.8-flash-medium` · medium | 與 Worker 相同 | 與 Worker 相同 |
-| Codex | `gpt-6-astra` · high | `gpt-6.1-sol` · medium | `gpt-6.1-sol` · medium | `gpt-6-luna` · medium | `gpt-6-luna` · medium |
+| Claude（Antigravity） | `claude-sonnet-5-5-medium` · medium | `claude-opus-5-5-high` · high | `claude-sonnet-5-5-medium` · medium | 與 Worker 相同 | 與 Worker 相同 |
+| Gemini 3.8 Flash（Antigravity） | `gemini-3.8-flash-medium` · medium | `gemini-3.8-flash-high` · high | `gemini-3.8-flash-medium` · medium | 與 Worker 相同 | 與 Worker 相同 |
+| Codex | `gpt-6.1-sol` · medium | `gpt-6-astra` · high | `gpt-6.1-sol` · medium | `gpt-6-luna` · medium | `gpt-6-luna` · medium |
 
-Gemini 的設定檔取決於 Antigravity 目前使用的模型（`~/.gemini/antigravity-cli/settings.json` 中的 `model`）：`Gemini 4 Hydrogen ...` 使用 `gemini-4-hydrogen`（當 `gemini-4-argon-high` 配額用盡或無法使用時，也可設定 `SOP_LEAD_MODEL=gemini-4-hydrogen-high` 退回 Hydrogen）、`Claude ...` 使用 `claude`、`Gemini 3.8 Flash ...` 使用 `gemini-3.8-flash`，而 `Gemini 4 ...`、其他模型或找不到檔案時使用 `gemini-4`。在 Codex 中，若 `gpt-6-astra` 配額用盡或無法使用，可透過 `SOP_LEAD_MODEL=gpt-6.1-sol` 讓 phase 1 Lead 退回 `gpt-6.1-sol` · high。
+Gemini 的設定檔取決於 Antigravity 目前使用的模型（`~/.gemini/antigravity-cli/settings.json` 中的 `model`）：`Gemini 4 Hydrogen ...` 使用 `gemini-4-hydrogen`（當 `gemini-4-argon-high` 配額用盡或無法使用時，也可設定 `SOP_LEAD_MODEL=gemini-4-hydrogen-high` 退回 Hydrogen）、`Claude ...` 使用 `claude`、`Gemini 3.8 Flash ...` 使用 `gemini-3.8-flash`，而 `Gemini 4 ...`、其他模型或找不到檔案時使用 `gemini-4`。在 Codex 中，若 `gpt-6-astra` 配額用盡或無法使用，可透過 `SOP_LEAD_MODEL=gpt-6.1-sol` 讓 `lead` subagent 退回 `gpt-6.1-sol` · high。
 
-較便宜的模型只用在工作單純、事後還會再檢查的地方：
+主線程維持在 `worker` 模型，各階段則依職責派出對應模型的 subagent：
+- **Planner**：在 Step 1–2 由 `lead` 模型的唯讀 subagent 進行深度稽核、任務分組，並撰寫執行計畫與 Worker spec（[planner.md](skills/spec-ops-pipeline/references/planner.md)）；主線程負責查驗每處 `file:line` 證據、落盤檔案並執行重疊與 DoD 檢查。
+- **Reviewer**：審查每個 Worker diff 的唯讀 subagent，一律使用 `lead` 模型；主線程負責查驗其發現。
+- **Plan Critic**：只有在有 H 風險任務時才使用 `lead` 模型，否則使用 `worker` 模型。
 - **輕量 Worker**：任務必須是 L 風險、機械性修改（改名、刪死碼、lint/型別修正）、最多 5 個檔案，
   且 DoD 能分辨修好與沒修好，才會使用。分級會顯示在 checkpoint 的決策矩陣中；第一輪審查沒通過的
-  輕量任務，會改用 Worker 模型重新派工。
-- **Scout**：稽核範圍很大時，由唯讀的 scout 平行掃描並回傳 `file:line` 線索；phase 1 Lead 會逐一
-  驗證線索，所有判斷仍由 Lead 負責。
-- **Reviewer**：審查每個 Worker diff 的唯讀 subagent，一律使用 phase 1 的 Lead 模型（單一 session 的流程中，Lead 本身就是該模型）。
-- **Plan Critic**：只有在有 H 風險任務時才使用 phase 1 的 Lead 模型，否則使用 phase 2 的 Lead 模型。
+  輕量任務，會改用 `worker` 模型重新派工。
+- **Scout**：稽核範圍很大時，由唯讀的 scout 平行掃描並回傳 `file:line` 線索交給 Planner 驗證。
 
-可用 `SOP_LEAD_MODEL`、`SOP_LEAD_EFFORT`、`SOP_LEAD2_MODEL`、`SOP_LEAD2_EFFORT`、
+可用 `SOP_LEAD_MODEL`、`SOP_LEAD_EFFORT`、
 `SOP_WORKER_MODEL`、`SOP_WORKER_EFFORT`、`SOP_WORKER_LIGHT_MODEL`、`SOP_WORKER_LIGHT_EFFORT`、
 `SOP_SCOUT_MODEL`、`SOP_SCOUT_EFFORT` 覆寫。詳見 [models.md](skills/spec-ops-pipeline/references/models.md)。
 
@@ -325,7 +314,7 @@ worktree 之前，Lead 會先檢查 `worktree.sh pool`；位址池不足時，�
 | `SOP_BRANCH_PREFIX` | 任務分支前綴（預設 `sop/`） |
 | `SOP_STAGE_PREFIX` | 階段分支前綴（預設 `sop-stage/`） |
 | `SOP_ECOSYSTEM` | 強制指定執行環境生態系（`claude`、`gemini`、`codex`） |
-| `SOP_SESSION_SPLIT` | phase 2 是否換新 session：`auto`（預設；僅含 H 風險任務、3 個以上任務或分階段時）、`always`、`never` |
+| `SOP_SESSION_SPLIT` | phase 2 是否換新 session：`never`（預設；在同一 session 繼續）、`always`，或 `auto`（含 H 風險任務、3 個以上任務或分階段時換 session） |
 | `SOP_AUTO_MERGE_RISK` | 自動合併的風險層級，例如 `L,M`，或 `none`（優先於 `autoMergeRisk`） |
 | `SOP_MERGE_METHOD` | `squash`、`merge` 或 `rebase`（優先於 `mergeMethod`） |
 | `SOP_AUTO_CLEANUP` | `1` 或 `0`（優先於 `autoCleanup`） |
@@ -342,7 +331,7 @@ worktree 之前，Lead 會先檢查 `worktree.sh pool`；位址池不足時，�
 | 腳本 | 用途 |
 | :--- | :--- |
 | [`preflight.sh`](skills/spec-ops-pipeline/scripts/preflight.sh) | Lead 一次完成的 preflight：輸出一行 JSON，含執行環境、設定、殘留任務、run dir、PR 就緒狀態、baseline、base 檢查與 Docker 位址池 |
-| [`detect_runtime.sh`](skills/spec-ops-pipeline/scripts/detect_runtime.sh) | 偵測 agent 生態系，並以 JSON 輸出 phase 1 / phase 2 的 Lead 與 Worker 模型 |
+| [`detect_runtime.sh`](skills/spec-ops-pipeline/scripts/detect_runtime.sh) | 偵測 agent 生態系，並以 JSON 輸出 `lead`、`worker`、`worker_light` 與 `scout` 模型 |
 | [`worktree.sh`](skills/spec-ops-pipeline/scripts/worktree.sh) | 感知佈局的 worktree 生命週期管理：`config`、`path`、`create`、`integrate`、`remove`、`list`、`status`、`provision`、`rundir`、`pool`、`sync`；`pool [--prune]` 回報 Docker 位址池剩餘名額與孤立的 Compose 網路，`remove` 也會刪除該 worktree 未使用的 Compose 網路 |
 | [`run_logged.sh`](skills/spec-ops-pipeline/scripts/run_logged.sh) | 執行指令並把輸出寫入 log 檔；只印一行摘要（失敗時附最後幾行），並保留原本的 exit code |
 | [`pr.sh`](skills/spec-ops-pipeline/scripts/pr.sh) | `preflight` / `open` / `merge` / `state`：檢查能否開 PR、push 任務分支並開（或沿用）PR、等 checks 通過後合併、查詢 PR 狀態；輸出一行 JSON |
@@ -372,6 +361,7 @@ tests/auth/          # 結尾的 / 代表整個目錄
 │       │   ├── execution-plan.md        # 相依性分析、執行模式、checkpoint 呈報格式與執行狀態
 │       │   ├── models.md                # 各角色的模型、Worker 分級與升級規則
 │       │   ├── plan-critic.md           # 對 spec 的唯讀對抗式審查
+│       │   ├── planner.md               # 唯讀 Planner subagent（稽核、計畫與 spec）
 │       │   ├── review-checklist.md      # diff 審查與判定格式
 │       │   ├── scout.md                 # 以便宜模型進行的唯讀稽核掃描
 │       │   ├── scripts-and-layout.md    # 腳本 exit code、worktree 佈局與設定覆寫
