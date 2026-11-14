@@ -65,7 +65,7 @@
 ### 💡 極致精簡 Context 視窗並節省 Token 成本
 - **單行 Log 濃縮機制**：所有 test、lint 與 build 指令皆透過 `run_logged.sh` 執行，只回傳一行執行摘要（僅在失敗時附上最後幾行 log），避免冗長的測試輸出塞爆 Lead 的 context。
 - **Subagent Context 隔離與持久化狀態**：Phase 1 的重度讀檔完全交由唯讀的 Scout 與 Planner subagent 處理，並將執行狀態保存在 `<git-common-dir>/sop-run/`，讓主線程的 context 從頭到尾保持乾淨（亦支援隨時 `/clear` + `resume` 接續）。
-- **零模型切換、依階段派發最佳模型**：主線程全程固定使用快速、高性價比的 `worker` 模型——各階段之間完全不需要手動切換 `/model`——只在需要深度推理的節點（`Planner` 規劃、`Reviewer` 審查、H 風險 `Plan Critic`）派發高階 `lead` subagent。
+- **零模型切換、依階段派發最佳模型**：主線程全程固定使用快速、高性價比的 `worker` 模型——各階段之間完全不需要手動切換 `/model`——只在需要深度推理的節點（`Planner` 規劃、`Plan Critic` 計畫審查、`Reviewer` 程式碼審查）派發高階 `lead` subagent。
 
 ### 🔧 零設定且自動適應 Repo 佈局
 - **免設定直接套用**：自動偵測一般 repo 與 bare-repo worktree 佈局（`<root>/.bare` + `<root>/main/`），並提供安全的就地轉換工具（`migrate_to_bare.sh`，先 dry-run、失敗自動 rollback）與根目錄 agent 設定 symlink。
@@ -216,7 +216,7 @@ ln -s ~/src/spec-ops-pipeline/skills/spec-ops-pipeline \
 
 ### 預設模型分配
 
-| 生態系 | 主線程（Orchestrator） | `lead` subagents（Planner、Reviewer、H 風險 Critic） | `worker` subagents（標準 Worker、L/M Critic） | 輕量 Worker | Scout |
+| 生態系 | 主線程（Orchestrator） | `lead` subagents（Planner、Plan Critic、Reviewer） | `worker` subagents（標準 Worker） | 輕量 Worker | Scout |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | Claude（Claude Code） | `claude-sonnet-5-5` · medium | `claude-opus-5-5` · high | `claude-sonnet-5-5` · medium | `claude-haiku-5-5` · medium | `claude-haiku-5-5` · medium |
 | Gemini 4（Antigravity，預設） | `gemini-4-hydrogen-high` · high | `gemini-4-argon-high` · high | `gemini-4-hydrogen-high` · high | 與 Worker 相同 | 與 Worker 相同 |
@@ -229,8 +229,8 @@ Gemini 的設定檔取決於 Antigravity 目前使用的模型（`~/.gemini/anti
 
 主線程維持在 `worker` 模型，各階段則依職責派出對應模型的 subagent：
 - **Planner**：在 Step 1–2 由 `lead` 模型的唯讀 subagent 進行深度稽核、任務分組，並撰寫執行計畫與 Worker spec（[planner.md](skills/spec-ops-pipeline/references/planner.md)）；主線程負責查驗每處 `file:line` 證據、落盤檔案並執行重疊與 DoD 檢查。
+- **Plan Critic**：在 Step 2 一律由 `lead` 模型的唯讀 subagent 對抗式挑戰 spec 與執行計畫（[plan-critic.md](skills/spec-ops-pipeline/references/plan-critic.md)）。
 - **Reviewer**：審查每個 Worker diff 的唯讀 subagent，一律使用 `lead` 模型；主線程負責查驗其發現。
-- **Plan Critic**：只有在有 H 風險任務時才使用 `lead` 模型，否則使用 `worker` 模型。
 - **輕量 Worker**：任務必須是 L 風險、機械性修改（改名、刪死碼、lint/型別修正）、最多 5 個檔案，
   且 DoD 能分辨修好與沒修好，才會使用。分級會顯示在 checkpoint 的決策矩陣中；第一輪審查沒通過的
   輕量任務，會改用 `worker` 模型重新派工。

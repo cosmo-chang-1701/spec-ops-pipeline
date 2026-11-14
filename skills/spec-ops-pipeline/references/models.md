@@ -9,11 +9,10 @@ heuristics — e.g. a Claude Code session may also have `GEMINI_API_KEY` set).
 | Role | Runs | Claude (Claude Code) | Gemini (Antigravity) | Codex |
 | :--- | :--- | :--- | :--- | :--- |
 | Lead (main thread) | Steps 0–6 orchestration, test/DoD runs, subagent disposition, worktrees, PRs | `worker` (`claude-sonnet-5-5` · medium) | `worker` (`gemini-4-hydrogen-high` · high) | `worker` (`gpt-6.1-sol` · medium) |
-| `lead` | Planner ([planner.md](planner.md)) & Reviewer ([review-checklist.md](review-checklist.md#reviewer-subagent)) subagents | `claude-opus-5-5` · high | `gemini-4-argon-high` · high | `gpt-6-astra` · high |
+| `lead` | Planner ([planner.md](planner.md)), Plan Critic ([plan-critic.md](plan-critic.md)) & Reviewer ([review-checklist.md](review-checklist.md#reviewer-subagent)) subagents | `claude-opus-5-5` · high | `gemini-4-argon-high` · high | `gpt-6-astra` · high |
 | `worker` | Main thread · standard Worker tasks | `claude-sonnet-5-5` · medium | `gemini-4-hydrogen-high` · high | `gpt-6.1-sol` · medium |
 | `worker_light` | Light tasks ([tiers](#worker-tier)) | `claude-haiku-5-5` · medium | same as `worker` | `gpt-6-luna` · medium |
 | `scout` | Read-only audit sweeps ([scout.md](scout.md)) | `claude-haiku-5-5` · medium | same as `worker` | `gpt-6-luna` · medium |
-| Plan Critic | [plan-critic.md](plan-critic.md) | `lead` if any task is H-risk, else `worker` | same rule | same rule |
 
 The Gemini column is the `gemini-4` profile (default). The `model` key of
 `~/.gemini/antigravity-cli/settings.json` (display name or id) selects the Antigravity profile;

@@ -29,11 +29,11 @@ Tempted to "just fix it"? Write a spec.
 ## Model assignment
 Preflight `runtime` gives the models per role (`lead`, `worker`, `worker_light`,
 `scout`). The main thread (Orchestrator / Lead) always runs on `worker`; each phase
-dispatches subagents on the matching model (`lead` for the Planner, Reviewer, and H-risk
-Plan Critic; `worker` for standard Workers and L/M-risk Plan Critic; `worker_light` for
-light Workers; `scout` for audit sweeps). Roles, defaults, overrides, tiers:
-[models.md](references/models.md). If you are not on the `worker` model, tell the user how
-to switch (`/model`, `/effort` in Claude Code); do not silently continue.
+dispatches subagents on the matching model (`lead` for the Planner, Plan Critic, and
+Reviewer; `worker` for standard Workers; `worker_light` for light Workers; `scout` for
+audit sweeps). Roles, defaults, overrides, tiers: [models.md](references/models.md). If you
+are not on the `worker` model, tell the user how to switch (`/model`, `/effort` in Claude
+Code); do not silently continue.
 
 ## Sessions and context
 - **Phase 1**: steps 0–2 on the `worker` main thread (heavy code reading is isolated inside
@@ -108,8 +108,7 @@ commands inside `source_worktree`. Act on:
   through `run_logged.sh` (logs `<slug>-dry-<n>.log`), note its class in the spec, fix `BROKEN`
   ones ([details](references/worker-spec-template.md#dod-dry-run)); stage 2+ at step 3.
 - **Plan Critic**: with 2+ tasks, `staged` mode, an H-risk task, or on request: a read-only
-  critic (`lead` model only if a task is H-risk, else `worker`); decide on each
-  finding per [plan-critic.md](references/plan-critic.md). One round.
+  critic on the `lead` model; decide on each finding per [plan-critic.md](references/plan-critic.md). One round.
 - **Show the checkpoint report and wait for approval** before step 3, in the format of
   [execution-plan.md §3](references/execution-plan.md#3-checkpoint-report). The approval must explicitly cover:
   in `staged` mode the inter-stage local commits and merges; always the automatic commit,
