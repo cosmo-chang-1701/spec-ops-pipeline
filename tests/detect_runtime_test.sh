@@ -9,10 +9,7 @@ section "claude defaults"
 AGENT=claude; out=$(run)
 check_eq "lead model" "$(json_get '["lead"]["model"]' <<<"$out")" claude-opus-5-5
 check_eq "lead effort" "$(json_get '["lead"]["effort"]' <<<"$out")" high
-check_eq "phase 2 lead model" "$(json_get '["lead_phase2"]["model"]' <<<"$out")" claude-sonnet-5-5
-check_eq "phase 2 lead effort" "$(json_get '["lead_phase2"]["effort"]' <<<"$out")" medium
 check_eq "lead dispatch alias" "$(json_get '["lead"]["dispatch_model"]' <<<"$out")" opus
-check_eq "phase 2 lead dispatch alias" "$(json_get '["lead_phase2"]["dispatch_model"]' <<<"$out")" sonnet
 check_eq "worker model" "$(json_get '["worker"]["model"]' <<<"$out")" claude-sonnet-5-5
 check_eq "worker effort" "$(json_get '["worker"]["effort"]' <<<"$out")" medium
 check_eq "worker dispatch alias" "$(json_get '["worker"]["dispatch_model"]' <<<"$out")" sonnet
@@ -22,6 +19,7 @@ check_eq "light worker dispatch alias" "$(json_get '["worker_light"]["dispatch_m
 check_eq "scout model" "$(json_get '["scout"]["model"]' <<<"$out")" claude-haiku-5-5
 check_eq "scout effort" "$(json_get '["scout"]["effort"]' <<<"$out")" medium
 check_eq "scout dispatch alias" "$(json_get '["scout"]["dispatch_model"]' <<<"$out")" haiku
+check_eq "no lead_phase2 key" "$(json_get '.__contains__("lead_phase2")' <<<"$out")" False
 
 SETTINGS=$WORK/.gemini/antigravity-cli/settings.json
 mkdir -p "${SETTINGS%/*}"
@@ -33,7 +31,7 @@ gemini_case() {
   local r
   check_eq "$1: detected_by" "$(json_get '["detected_by"]' <<<"$out")" "flag:--agent;model:$3($4)"
   check_eq "$1: lead" "$(json_get '["lead"]["model"]' <<<"$out")/$(json_get '["lead"]["effort"]' <<<"$out")/$(json_get '["lead"]["dispatch_model"]' <<<"$out")" "$5/high/$5"
-  for r in lead_phase2 worker worker_light scout; do
+  for r in worker worker_light scout; do
     check_eq "$1: $r" "$(json_get "[\"$r\"][\"model\"]" <<<"$out")/$(json_get "[\"$r\"][\"effort\"]" <<<"$out")/$(json_get "[\"$r\"][\"dispatch_model\"]" <<<"$out")" "$6/$7/$6"
   done
 }
@@ -90,27 +88,26 @@ check_eq "--help does not print code" "$(env -i PATH="$PATH" HOME="$WORK" bash "
 section "codex defaults"
 AGENT=codex; out=$(run)
 check_eq "codex lead" "$(json_get '["lead"]["model"]' <<<"$out")/$(json_get '["lead"]["effort"]' <<<"$out")/$(json_get '["lead"]["dispatch_model"]' <<<"$out")" gpt-6-astra/high/gpt-6-astra
-check_eq "codex lead_phase2" "$(json_get '["lead_phase2"]["model"]' <<<"$out")/$(json_get '["lead_phase2"]["effort"]' <<<"$out")/$(json_get '["lead_phase2"]["dispatch_model"]' <<<"$out")" gpt-6.1-sol/medium/gpt-6.1-sol
 check_eq "codex worker" "$(json_get '["worker"]["model"]' <<<"$out")/$(json_get '["worker"]["effort"]' <<<"$out")/$(json_get '["worker"]["dispatch_model"]' <<<"$out")" gpt-6.1-sol/medium/gpt-6.1-sol
 check_eq "codex worker_light" "$(json_get '["worker_light"]["model"]' <<<"$out")/$(json_get '["worker_light"]["effort"]' <<<"$out")/$(json_get '["worker_light"]["dispatch_model"]' <<<"$out")" gpt-6-luna/medium/gpt-6-luna
 check_eq "codex scout" "$(json_get '["scout"]["model"]' <<<"$out")/$(json_get '["scout"]["effort"]' <<<"$out")/$(json_get '["scout"]["dispatch_model"]' <<<"$out")" gpt-6-luna/medium/gpt-6-luna
 
 
 section "overrides"
-AGENT=claude; out=$(run SOP_LEAD2_MODEL=claude-opus-5-5 SOP_LEAD2_EFFORT=medium SOP_LEAD_EFFORT=max SOP_WORKER_MODEL=haiku)
-check_eq "SOP_LEAD2_MODEL" "$(json_get '["lead_phase2"]["model"]' <<<"$out")" claude-opus-5-5
-check_eq "SOP_LEAD2_EFFORT" "$(json_get '["lead_phase2"]["effort"]' <<<"$out")" medium
-check_eq "SOP_LEAD2_MODEL sets the dispatch alias" "$(json_get '["lead_phase2"]["dispatch_model"]' <<<"$out")" claude-opus-5-5
+AGENT=claude; out=$(run SOP_LEAD_EFFORT=max SOP_WORKER_MODEL=haiku SOP_WORKER_EFFORT=low)
 check_eq "SOP_LEAD_MODEL sets the dispatch alias" "$(json_get '["lead"]["dispatch_model"]' <<<"$(run SOP_LEAD_MODEL=sonnet)")" sonnet
-check_eq "SOP_LEAD_EFFORT leaves phase 2 alone" "$(json_get '["lead_phase2"]["effort"]' <<<"$(run SOP_LEAD_EFFORT=max)")" medium
+check_eq "SOP_LEAD_EFFORT" "$(json_get '["lead"]["effort"]' <<<"$out")" max
+check_eq "SOP_WORKER_MODEL" "$(json_get '["worker"]["model"]' <<<"$out")" haiku
+check_eq "SOP_WORKER_EFFORT" "$(json_get '["worker"]["effort"]' <<<"$out")" low
 check_eq "SOP_WORKER_MODEL sets the dispatch alias" "$(json_get '["worker"]["dispatch_model"]' <<<"$out")" haiku
 out=$(run SOP_WORKER_LIGHT_MODEL=sonnet SOP_WORKER_LIGHT_EFFORT=low SOP_SCOUT_MODEL=sonnet SOP_SCOUT_EFFORT=medium)
 check_eq "SOP_WORKER_LIGHT_MODEL sets the dispatch alias" "$(json_get '["worker_light"]["dispatch_model"]' <<<"$out")" sonnet
 check_eq "SOP_WORKER_LIGHT_EFFORT" "$(json_get '["worker_light"]["effort"]' <<<"$out")" low
 check_eq "SOP_SCOUT_MODEL sets the dispatch alias" "$(json_get '["scout"]["dispatch_model"]' <<<"$out")" sonnet
 check_eq "SOP_SCOUT_EFFORT" "$(json_get '["scout"]["effort"]' <<<"$out")" medium
-check_eq "session split defaults to auto" "$(json_get '["session_split"]' <<<"$out")" auto
-check_eq "SOP_SESSION_SPLIT" "$(json_get '["session_split"]' <<<"$(run SOP_SESSION_SPLIT=never)")" never
+check_eq "session split defaults to never" "$(json_get '["session_split"]' <<<"$out")" never
+check_eq "SOP_SESSION_SPLIT=always" "$(json_get '["session_split"]' <<<"$(run SOP_SESSION_SPLIT=always)")" always
+check_eq "SOP_SESSION_SPLIT=auto" "$(json_get '["session_split"]' <<<"$(run SOP_SESSION_SPLIT=auto)")" auto
 run SOP_SESSION_SPLIT=bogus >/dev/null 2>&1; rc=$?
 check_eq "invalid SOP_SESSION_SPLIT: exit 2" "$rc" 2
 

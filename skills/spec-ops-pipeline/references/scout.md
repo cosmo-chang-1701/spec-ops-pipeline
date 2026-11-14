@@ -1,12 +1,14 @@
 # Scouts (read-only audit sweeps)
 
 Scouts are cheap read-only subagents that sweep a large audit scope for candidate issues, so
-the phase 1 Lead reads only the spots they point at instead of every file. They only collect
-leads; the Lead verifies each one, judges severity, and writes the gap report.
+the `lead` Planner subagent ([planner.md](planner.md)) reads only the spots they point at
+instead of every file. They only collect leads; the Planner verifies them and drafts the
+gap report and specs, and the main thread verifies the final findings.
 
 ## When to run
 At step 1, when the agreed scope holds more than about 30 tracked files or spans two or more
-top-level directories. For a smaller scope read the code yourself and skip scouts.
+top-level directories. For a smaller scope skip scouts and pass the scope directly to the
+Planner.
 
 Split the scope into non-overlapping areas — one directory, or one concern (security / perf /
 debt) over a directory — and give each scout one area. At most `max_parallel` scouts.
@@ -42,9 +44,11 @@ all `Agent` calls in one message).
 Afterwards re-run the step 0 baseline command on `source_worktree`; it must still match.
 
 ## Lead disposition
-- A lead is not evidence. Open the cited lines yourself (with a small range, not the whole
-  file) before it becomes a gap-report finding; drop what you cannot confirm.
-- Severity, the proposed fix, and the task grouping are yours.
+- Pass the `<run dir>/scout-<area>.md` paths in `<run dir>/planner-input.md` to the
+  `lead` Planner subagent ([planner.md](planner.md)).
+- A lead is not evidence: the Planner opens the cited lines (with a small range, not the
+  whole file) before turning a lead into a finding, and you verify each finding's
+  `file:line` before saving the gap report.
 - Lint, test, and type-check commands are still run by you through `run_logged.sh`; scouts do
   not replace them.
 - Areas a scout reports as clean need no re-read unless a finding elsewhere points there.

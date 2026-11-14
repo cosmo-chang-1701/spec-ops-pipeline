@@ -11,20 +11,20 @@
 #                               several keys at once are common and ambiguous)
 #   5. Fallback                (claude)
 #
-# Roles: "lead" runs phase 1 (preflight, audit, spec, checkpoint); "lead_phase2" runs
-# phase 2 (dispatch, gate, review, close-out), in a fresh session for larger runs; "worker" implements;
-# "worker_light" implements small mechanical L-risk tasks; "scout" sweeps code read-only
-# during the audit (see references/models.md). The read-only Reviewer of a Worker's diff runs
-# on "lead" (use its dispatch_model).
-# Per-field overrides: SOP_LEAD_MODEL, SOP_LEAD_EFFORT, SOP_LEAD2_MODEL, SOP_LEAD2_EFFORT,
-# SOP_WORKER_MODEL, SOP_WORKER_EFFORT, SOP_WORKER_LIGHT_MODEL, SOP_WORKER_LIGHT_EFFORT,
-# SOP_SCOUT_MODEL, SOP_SCOUT_EFFORT.
+# Roles: the main thread (Orchestrator) runs on "worker" across all steps; "lead" runs
+# high-reasoning read-only subagents — Planner (step 1-2 audit, gap report, plan & specs),
+# Reviewer of a Worker's diff (step 5), and Plan Critic when any task is H-risk (step 2);
+# "worker" also implements standard tasks and runs the L/M-risk Plan Critic; "worker_light"
+# implements small mechanical L-risk tasks; "scout" sweeps code read-only during the audit.
+# Per-field overrides: SOP_LEAD_MODEL, SOP_LEAD_EFFORT, SOP_WORKER_MODEL, SOP_WORKER_EFFORT,
+# SOP_WORKER_LIGHT_MODEL, SOP_WORKER_LIGHT_EFFORT, SOP_SCOUT_MODEL, SOP_SCOUT_EFFORT.
 # Gemini profile: the `model` key of ~/.gemini/antigravity-cli/settings.json (display name or
 # id) picks gemini-3.8-flash (Gemini 3.8 Flash...), claude (Claude...), gemini-4-hydrogen
 # (Gemini 4 Hydrogen...), or gemini-4 (default, also for Gemini 4 Argon... or any unrecognised
 # model or missing file); reported in detected_by as model:<profile>(settings|default).
-# Session split: SOP_SESSION_SPLIT = auto (default: split only runs with an H-risk task,
-# three or more tasks, or staged mode), always, or never; reported as "session_split".
+# Session split: SOP_SESSION_SPLIT = never (default: continue in the same session at phase 2),
+# always (fresh session for phase 2), or auto (split with an H-risk task, 3+ tasks, or staged
+# mode); reported as "session_split".
 # Output: a single JSON object on stdout.
 set -euo pipefail
 
@@ -62,7 +62,7 @@ while (($#)); do
   esac
 done
 
-session_split=${SOP_SESSION_SPLIT:-auto}
+session_split=${SOP_SESSION_SPLIT:-never}
 case $session_split in
   auto|always|never) ;;
   *) die "SOP_SESSION_SPLIT must be one of: auto always never" ;;
@@ -96,7 +96,6 @@ fi
 case $ecosystem in
   claude)
     lead_model=claude-opus-5-5   lead_effort=high   lead_alias=opus
-    lead2_model=claude-sonnet-5-5 lead2_effort=medium lead2_alias=sonnet
     worker_model=claude-sonnet-5-5 worker_effort=medium
     worker_alias=sonnet
     light_model=claude-haiku-5-5   light_effort=medium light_alias=haiku
@@ -127,14 +126,12 @@ case $ecosystem in
         worker_model=gemini-4-hydrogen-high  worker_effort=high ;;
     esac
     lead_alias=$lead_model
-    lead2_model=$worker_model lead2_effort=$worker_effort lead2_alias=$worker_model
     worker_alias=$worker_model
     light_model=$worker_model light_effort=$worker_effort light_alias=$worker_alias
     scout_model=$worker_model scout_effort=$worker_effort scout_alias=$worker_alias
     detected_by+=";model:$gemini_profile($gemini_source)" ;;
   codex)
     lead_model=gpt-6-astra   lead_effort=high     lead_alias=$lead_model
-    lead2_model=gpt-6.1-sol  lead2_effort=medium  lead2_alias=$lead2_model
     worker_model=gpt-6.1-sol worker_effort=medium worker_alias=$worker_model
     light_model=gpt-6-luna   light_effort=medium  light_alias=$light_model
     scout_model=gpt-6-luna   scout_effort=medium  scout_alias=$scout_model ;;
@@ -143,9 +140,6 @@ esac
 lead_model=${SOP_LEAD_MODEL:-$lead_model}
 lead_effort=${SOP_LEAD_EFFORT:-$lead_effort}
 [[ -n ${SOP_LEAD_MODEL:-} ]] && lead_alias=$SOP_LEAD_MODEL
-lead2_model=${SOP_LEAD2_MODEL:-$lead2_model}
-lead2_effort=${SOP_LEAD2_EFFORT:-$lead2_effort}
-[[ -n ${SOP_LEAD2_MODEL:-} ]] && lead2_alias=$SOP_LEAD2_MODEL
 worker_model=${SOP_WORKER_MODEL:-$worker_model}
 worker_effort=${SOP_WORKER_EFFORT:-$worker_effort}
 [[ -n ${SOP_WORKER_MODEL:-} ]] && worker_alias=$SOP_WORKER_MODEL
@@ -156,10 +150,9 @@ scout_model=${SOP_SCOUT_MODEL:-$scout_model}
 scout_effort=${SOP_SCOUT_EFFORT:-$scout_effort}
 [[ -n ${SOP_SCOUT_MODEL:-} ]] && scout_alias=$SOP_SCOUT_MODEL
 
-printf '{"ecosystem":"%s","detected_by":"%s","lead":{"model":"%s","effort":"%s","dispatch_model":"%s"},"lead_phase2":{"model":"%s","effort":"%s","dispatch_model":"%s"},"worker":{"model":"%s","effort":"%s","dispatch_model":"%s"},"worker_light":{"model":"%s","effort":"%s","dispatch_model":"%s"},"scout":{"model":"%s","effort":"%s","dispatch_model":"%s"},"session_split":"%s"}\n' \
+printf '{"ecosystem":"%s","detected_by":"%s","lead":{"model":"%s","effort":"%s","dispatch_model":"%s"},"worker":{"model":"%s","effort":"%s","dispatch_model":"%s"},"worker_light":{"model":"%s","effort":"%s","dispatch_model":"%s"},"scout":{"model":"%s","effort":"%s","dispatch_model":"%s"},"session_split":"%s"}\n' \
   "$ecosystem" "$(json_escape "$detected_by")" \
   "$(json_escape "$lead_model")" "$(json_escape "$lead_effort")" "$(json_escape "$lead_alias")" \
-  "$(json_escape "$lead2_model")" "$(json_escape "$lead2_effort")" "$(json_escape "$lead2_alias")" \
   "$(json_escape "$worker_model")" "$(json_escape "$worker_effort")" "$(json_escape "$worker_alias")" \
   "$(json_escape "$light_model")" "$(json_escape "$light_effort")" "$(json_escape "$light_alias")" \
   "$(json_escape "$scout_model")" "$(json_escape "$scout_effort")" "$(json_escape "$scout_alias")" \

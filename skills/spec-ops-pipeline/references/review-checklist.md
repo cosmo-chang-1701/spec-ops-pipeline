@@ -1,7 +1,7 @@
 # PR Review Checklist
 
-A Worker's diff is reviewed on the **`lead` model** (phase 1: `claude-opus-5-5` · high by
-default), not on the cheaper phase 2 Lead model. Review the task diff, not the whole repo.
+A Worker's diff is reviewed on the **`lead` model** (`claude-opus-5-5` · high by default),
+not on the main thread's `worker` model. Review the task diff, not the whole repo.
 
 Only review once the gates pass: `check_scope.sh` exits 0 **and** you re-ran every DoD
 command yourself in the worktree through `run_logged.sh` (never trust the Worker's report
@@ -9,12 +9,10 @@ alone). A failed gate is a REQUEST_CHANGES round without a review (it still sets
 task's `ever_rejected`, see [disposition](#lead-disposition)).
 
 ## Who reviews
-- `split` session — the phase 2 Lead is on a cheaper model, so it dispatches a read-only
-  **Reviewer** on the `lead` model ([below](#reviewer-subagent)) and decides on its findings
-  ([disposition](#lead-disposition)). Tasks of a stage can be reviewed in parallel, up to
-  `max_parallel` Reviewers at once.
-- `single` session — the Lead already runs on the `lead` model: review the diff yourself with
-  the checks below, with no subagent.
+The main thread runs on the `worker` model, so it always dispatches a read-only
+**Reviewer** subagent on the `lead` model ([below](#reviewer-subagent)) and decides on its
+findings ([disposition](#lead-disposition)). Tasks of a stage can be reviewed in parallel,
+up to `max_parallel` Reviewers at once.
 
 ## What to check, in priority order
 1. **Correctness** — logic errors, unhandled edge cases (empty/null/boundary/concurrency),

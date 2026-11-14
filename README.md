@@ -68,8 +68,8 @@ To enforce this, the skill strictly separates responsibilities:
 
 ### 💡 Lean context window & lower token costs
 - **1-line log compression**: Every test, linter, and build runs through `run_logged.sh`, returning a single summary line (plus log tail only on failure) so verbose test suites never pollute the Lead's context.
-- **Two-phase session splitting**: Runs with an H-risk task, three or more tasks, or stages persist state in `<git-common-dir>/sop-run/` and split between planning (Phase 1) and execution (Phase 2), keeping context sharp and focused.
-- **Right-sized model routing**: Automatically pairs top-tier reasoning models for Phase 1 auditing/spec-writing with faster, cost-effective models for Phase 2 orchestration and Worker implementation across Claude Code, Codex CLI, and Antigravity.
+- **Subagent context isolation & persistent run state**: Heavy Phase 1 code reading is offloaded to read-only Scout and Planner subagents, and run state is saved in `<git-common-dir>/sop-run/` so the main thread's context stays clean across the entire run (with optional `/clear` + `resume` session splitting).
+- **Zero-switch model routing**: The main thread stays on the fast, cost-effective `worker` model from start to finish — no manual `/model` switching between phases — while dispatching top-tier `lead` subagents (`Planner`, `Reviewer`, H-risk `Plan Critic`) only where deep reasoning is needed.
 
 ### 🔧 Zero-config & layout-aware
 - **Works with your repo as-is**: Automatically adapts to standard git checkouts and bare-repo worktree layouts (`<root>/.bare` + `<root>/main/`), with optional in-place migration (`migrate_to_bare.sh`, dry-run first + automatic rollback) and root-level agent config symlinks.
@@ -78,45 +78,46 @@ To enforce this, the skill strictly separates responsibilities:
 
 ```mermaid
 flowchart LR
-    subgraph P1[Phase 1 · session 1]
-    A[0. Preflight] --> B[1. Audit<br/>read-only]
-    B --> C[2. Spec<br/>dry run + critic<br/>user approval]
+    subgraph P1["Phase 1 · Audit & Plan"]
+    A[0. Preflight] --> B["1. Audit<br/>Planner subagent (lead)"]
+    B --> C["2. Spec<br/>dry run + Critic<br/>user approval"]
     end
-    C -->|state.json<br/>/clear + resume| R[Resume]
-    subgraph P2[Phase 2 · fresh session]
-    R --> D[3. Worktree<br/>+ dispatch]
-    D --> E[4. Gate<br/>scope + DoD]
-    E --> F[5. Review<br/>≤ 3 rounds]
+    C -->|state.json<br/>same session or resume| D["3. Worktree<br/>+ dispatch (worker)"]
+    subgraph P2["Phase 2 · Execute & Review"]
+    D --> E["4. Gate<br/>scope + DoD"]
+    E --> F["5. Review<br/>Reviewer subagent (lead)"]
     F -->|REQUEST_CHANGES| D
     F -->|next stage| D
-    F -->|APPROVE| PR[Commit + PR<br/>merge per autoMergeRisk]
+    F -->|APPROVE| PR["Commit + PR<br/>merge per autoMergeRisk"]
     PR --> G[6. Close-out]
     end
 ```
 
-1. **Preflight** — detect the runtime and worktree layout, check for leftover tasks,
-   record a baseline of the Lead's checkout.
-2. **Audit** — scan the agreed scope, run existing lint/test/type-check commands, write a
-   gap report, and group findings into tasks with small, non-overlapping whitelists.
-3. **Spec** — fill a [spec template](skills/spec-ops-pipeline/references/worker-spec-template.md) per task and an
-   [execution plan](skills/spec-ops-pipeline/references/execution-plan.md) (`independent` or `staged`). Check
-   whitelists for overlap, dry-run every DoD command to catch broken or unreachable ones, and
-   for larger or riskier plans have a read-only [Plan Critic](skills/spec-ops-pipeline/references/plan-critic.md)
-   challenge the specs. The user gets a decision matrix (scope, risk, shared resources per
-   task) ahead of the full specs. **Nothing is dispatched until the user approves.**
-   After approval the Lead writes `state.json` to the run dir and ends phase 1: run `/clear`,
-   switch to the phase 2 Lead model, and invoke the skill with `resume`. The new session
-   checks the baseline and base commit, reads only the plan and the current stage's specs,
-   and continues. A small run (one or two L/M-risk tasks, `independent` mode) skips the new
-   session and continues right away on the phase 1 Lead model; set `SOP_SESSION_SPLIT=always|never` or say so at
-   the checkpoint to change that.
+1. **Preflight** — detect the runtime and worktree layout, check that the main thread is on
+   the `worker` model, check for leftover tasks, and record a baseline of the Lead's checkout.
+2. **Audit** — run existing lint/test/type-check commands via `run_logged.sh` (and optional
+   parallel [Scouts](skills/spec-ops-pipeline/references/scout.md) for large scopes), then dispatch a read-only
+   [Planner subagent](skills/spec-ops-pipeline/references/planner.md) on the `lead` model to produce the gap report,
+   the [execution plan](skills/spec-ops-pipeline/references/execution-plan.md) (`independent` or `staged`), and each
+   task's [Worker spec](skills/spec-ops-pipeline/references/worker-spec-template.md) and whitelist.
+3. **Spec** — verify every cited `file:line` in `source_worktree`, save the artefacts to the
+   run dir, check whitelists for overlap, dry-run every DoD command to catch broken or
+   unreachable ones, and for larger or riskier plans have a read-only
+   [Plan Critic](skills/spec-ops-pipeline/references/plan-critic.md) challenge the specs. The user gets a decision
+   matrix (scope, risk, shared resources per task) ahead of the full specs. **Nothing is
+   dispatched until the user approves.**
+   After approval the Lead writes `state.json` to the run dir and continues directly to step 3
+   in the same session (`single`, default — Phase 1 file reading stayed inside the Planner
+   subagent and the main thread is already on `worker`). Set `SOP_SESSION_SPLIT=always` (or
+   `auto`, or say so at the checkpoint) to start phase 2 in a fresh session via `/clear` and
+   `/spec-ops-pipeline resume`.
 4. **Worktree + dispatch** — create one worktree per task on branch `sop/<slug>` and
    dispatch the stage's Workers in parallel (see [dispatch.md](skills/spec-ops-pipeline/references/dispatch.md)).
 5. **Gate** — run `check_scope.sh`, then re-run every DoD command (through
    `run_logged.sh`); all must pass.
 6. **Review** — review the diff against the recorded base using the
    [review checklist](skills/spec-ops-pipeline/references/review-checklist.md): a read-only
-   Reviewer subagent on the phase 1 Lead model does the review and the Lead verifies its
+   Reviewer subagent on the `lead` model does the review and the main thread verifies its
    findings. On APPROVE the task is committed, pushed and opened as a PR automatically, and the
    PR is merged when `autoMergeRisk` allows it ([rules](#auto-merge-modes)). In staged mode,
    approved tasks are committed locally and merged into `sop-stage/<n>` before the next stage
@@ -228,13 +229,13 @@ Review the worker's branch sop/fix-token-expiry before merging.
 ```
 
 A typical run pauses twice for your input: once to agree on audit scope, and once to
-approve the gap report, specs and execution plan. One or two L/M-risk tasks then continue in
-the same session. For a run with an H-risk task, three or more tasks, or stages, the Lead asks
-you to start a fresh session once, and continue with:
+approve the gap report, specs and execution plan. Because the main thread stays on the `worker`
+model and heavy Phase 1 code reading happens inside the `lead` Planner subagent, the run
+continues directly in the same session after approval. If you opt into a fresh phase 2 session
+(`SOP_SESSION_SPLIT=always` or `auto`), or resume an interrupted run, continue with:
 
 ```text
 /clear
-/model sonnet        # the phase 2 Lead model (Claude Code); /effort medium
 /spec-ops-pipeline resume
 ```
 
@@ -248,30 +249,34 @@ each merged PR. Once you have merged the PRs left to you, finish the cleanup wit
 
 ### Default model assignment
 
-| Ecosystem | Lead · phase 1 (audit, spec) | Lead · phase 2 (dispatch, gate, review) | Worker | Light Worker | Scout |
+| Ecosystem | Main thread (Orchestrator) | `lead` subagents (Planner, Reviewer, H-risk Critic) | `worker` subagents (Standard Worker, L/M Critic) | Light Worker | Scout |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| Claude (Claude Code) | `claude-opus-5-5` · high | `claude-sonnet-5-5` · medium | `claude-sonnet-5-5` · medium | `claude-haiku-5-5` · medium | `claude-haiku-5-5` · medium |
-| Gemini 4 (Antigravity, default) | `gemini-4-argon-high` · high | `gemini-4-hydrogen-high` · high | `gemini-4-hydrogen-high` · high | same as Worker | same as Worker |
+| Claude (Claude Code) | `claude-sonnet-5-5` · medium | `claude-opus-5-5` · high | `claude-sonnet-5-5` · medium | `claude-haiku-5-5` · medium | `claude-haiku-5-5` · medium |
+| Gemini 4 (Antigravity, default) | `gemini-4-hydrogen-high` · high | `gemini-4-argon-high` · high | `gemini-4-hydrogen-high` · high | same as Worker | same as Worker |
 | Gemini 4 Hydrogen (Antigravity) | `gemini-4-hydrogen-high` · high | `gemini-4-hydrogen-high` · high | `gemini-4-hydrogen-high` · high | same as Worker | same as Worker |
-| Claude (Antigravity) | `claude-opus-5-5-high` · high | `claude-sonnet-5-5-medium` · medium | `claude-sonnet-5-5-medium` · medium | same as Worker | same as Worker |
-| Gemini 3.8 Flash (Antigravity) | `gemini-3.8-flash-high` · high | `gemini-3.8-flash-medium` · medium | `gemini-3.8-flash-medium` · medium | same as Worker | same as Worker |
-| Codex | `gpt-6-astra` · high | `gpt-6.1-sol` · medium | `gpt-6.1-sol` · medium | `gpt-6-luna` · medium | `gpt-6-luna` · medium |
+| Claude (Antigravity) | `claude-sonnet-5-5-medium` · medium | `claude-opus-5-5-high` · high | `claude-sonnet-5-5-medium` · medium | same as Worker | same as Worker |
+| Gemini 3.8 Flash (Antigravity) | `gemini-3.8-flash-medium` · medium | `gemini-3.8-flash-high` · high | `gemini-3.8-flash-medium` · medium | same as Worker | same as Worker |
+| Codex | `gpt-6.1-sol` · medium | `gpt-6-astra` · high | `gpt-6.1-sol` · medium | `gpt-6-luna` · medium | `gpt-6-luna` · medium |
 
-Gemini profile: Antigravity's current model (`model` in `~/.gemini/antigravity-cli/settings.json`) picks the row — `Gemini 4 Hydrogen ...` selects `gemini-4-hydrogen` (or set `SOP_LEAD_MODEL=gemini-4-hydrogen-high` when `gemini-4-argon-high` is out of quota or unavailable), `Claude ...` selects `claude`, `Gemini 3.8 Flash ...` selects `gemini-3.8-flash`, and `Gemini 4 ...`, anything else, or no file selects `gemini-4`. In Codex, if `gpt-6-astra` is out of quota or unavailable, fall back to `gpt-6.1-sol` · high for phase 1 Lead via `SOP_LEAD_MODEL=gpt-6.1-sol`.
+Gemini profile: Antigravity's current model (`model` in `~/.gemini/antigravity-cli/settings.json`) picks the row — `Gemini 4 Hydrogen ...` selects `gemini-4-hydrogen` (or set `SOP_LEAD_MODEL=gemini-4-hydrogen-high` when `gemini-4-argon-high` is out of quota or unavailable), `Claude ...` selects `claude`, `Gemini 3.8 Flash ...` selects `gemini-3.8-flash`, and `Gemini 4 ...`, anything else, or no file selects `gemini-4`. In Codex, if `gpt-6-astra` is out of quota or unavailable, fall back to `gpt-6.1-sol` · high for `lead` subagents via `SOP_LEAD_MODEL=gpt-6.1-sol`.
 
-Cheaper models go only where the work is simple and checked afterwards:
+Each phase dispatches the right model for the job while keeping the main thread on `worker`:
+- **Planner** — a read-only subagent on the `lead` model audits the code, groups findings,
+  and drafts the execution plan and Worker specs ([planner.md](skills/spec-ops-pipeline/references/planner.md)); the main
+  thread verifies every cited `file:line`, saves the files, and runs the overlap and DoD
+  checks.
+- **Reviewer** — the read-only subagent that reviews each Worker's diff always runs on the
+  `lead` model; the main thread verifies its findings.
+- **Plan Critic** — runs on the `lead` model only when a task is H-risk, otherwise on the
+  `worker` model.
 - **Light Worker** — a task gets it only when it is L-risk, mechanical (rename, dead code,
   lint/type fixes), touches at most 5 files, and has a DoD that can tell fixed from unfixed.
   The tier shows in the checkpoint's decision matrix, and a light task that fails its first
-  review is re-dispatched on the Worker model.
+  review is re-dispatched on the `worker` model.
 - **Scout** — for a large audit scope, read-only scouts sweep it in parallel and return
-  `file:line` leads; the phase 1 Lead verifies each lead and does all the judging.
-- **Reviewer** — the read-only subagent that reviews each Worker's diff always runs on the
-  phase 1 Lead model (in a single-session run the Lead itself already is that model).
-- **Plan Critic** — runs on the phase 1 Lead model only when a task is H-risk, otherwise on
-  the phase 2 Lead model.
+  `file:line` leads for the Planner to verify.
 
-Override with `SOP_LEAD_MODEL`, `SOP_LEAD_EFFORT`, `SOP_LEAD2_MODEL`, `SOP_LEAD2_EFFORT`,
+Override with `SOP_LEAD_MODEL`, `SOP_LEAD_EFFORT`,
 `SOP_WORKER_MODEL`, `SOP_WORKER_EFFORT`, `SOP_WORKER_LIGHT_MODEL`, `SOP_WORKER_LIGHT_EFFORT`,
 `SOP_SCOUT_MODEL`, `SOP_SCOUT_EFFORT`. Details: [models.md](skills/spec-ops-pipeline/references/models.md).
 
@@ -352,7 +357,7 @@ the unused Compose networks of every project on the machine; Compose recreates t
 | `SOP_BRANCH_PREFIX` | Task branch prefix (default `sop/`) |
 | `SOP_STAGE_PREFIX` | Stage branch prefix (default `sop-stage/`) |
 | `SOP_ECOSYSTEM` | Force the runtime ecosystem (`claude`, `gemini`, `codex`) |
-| `SOP_SESSION_SPLIT` | Fresh session for phase 2: `auto` (default; only for runs with an H-risk task, 3+ tasks or stages), `always`, `never` |
+| `SOP_SESSION_SPLIT` | Fresh session for phase 2: `never` (default; continue in the same session), `always`, or `auto` (split for runs with an H-risk task, 3+ tasks or stages) |
 | `SOP_AUTO_MERGE_RISK` | Risk levels to auto-merge, e.g. `L,M`, or `none` (wins over `autoMergeRisk`) |
 | `SOP_MERGE_METHOD` | `squash`, `merge` or `rebase` (wins over `mergeMethod`) |
 | `SOP_AUTO_CLEANUP` | `1` or `0` (wins over `autoCleanup`) |
@@ -369,7 +374,7 @@ All scripts can also be used on their own.
 | Script | Purpose |
 | :--- | :--- |
 | [`preflight.sh`](skills/spec-ops-pipeline/scripts/preflight.sh) | The Lead's one-call preflight: prints one JSON line with the runtime, config, leftovers, run dir, PR readiness, baseline, base check and Docker pool |
-| [`detect_runtime.sh`](skills/spec-ops-pipeline/scripts/detect_runtime.sh) | Detect the agent ecosystem and print the phase 1 / phase 2 Lead and Worker models as JSON |
+| [`detect_runtime.sh`](skills/spec-ops-pipeline/scripts/detect_runtime.sh) | Detect the agent ecosystem and print the `lead`, `worker`, `worker_light` and `scout` models as JSON |
 | [`worktree.sh`](skills/spec-ops-pipeline/scripts/worktree.sh) | Layout-aware worktree lifecycle: `config`, `path`, `create`, `integrate`, `remove`, `list`, `status`, `provision`, `rundir`, `pool`, `sync`; `pool [--prune]` reports free Docker address-pool slots and orphaned Compose networks, and `remove` also deletes the worktree's unused Compose networks |
 | [`run_logged.sh`](skills/spec-ops-pipeline/scripts/run_logged.sh) | Run a command with its output in a log file; print a one-line summary (plus the tail on failure) and keep the exit code |
 | [`pr.sh`](skills/spec-ops-pipeline/scripts/pr.sh) | `preflight` / `open` / `merge` / `state`: check that PRs can be opened, push a task branch and open (or reuse) its PR, wait for checks and merge it, report a PR's state; prints one JSON line |
@@ -399,6 +404,7 @@ tests/auth/          # trailing / means the whole directory
 │       │   ├── execution-plan.md        # Dependency analysis, modes, checkpoint report, run state
 │       │   ├── models.md                # Models per role, Worker tiers and escalation
 │       │   ├── plan-critic.md           # Read-only adversarial review of the specs
+│       │   ├── planner.md               # Read-only Planner subagent (audit, plan & specs)
 │       │   ├── review-checklist.md      # Diff review and verdict format
 │       │   ├── scout.md                 # Read-only audit sweeps on a cheap model
 │       │   ├── scripts-and-layout.md    # Script exit codes, worktree layout, config overrides

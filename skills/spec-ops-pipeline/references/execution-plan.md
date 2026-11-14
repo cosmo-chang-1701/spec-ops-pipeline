@@ -63,8 +63,8 @@ Lead the report with what needs a human decision; put the detail last. Always in
 
 Below the matrix, one line on the session plan
 ([SKILL.md](../SKILL.md#sessions-and-context)), so the user can override it with the approval:
-`Session: single (auto — 2 L/M tasks)` or `Session: split (auto — 3 tasks)`; the source is
-`auto`, `always`, `never` (from `SOP_SESSION_SPLIT`) or `user`. Then one line on the PRs:
+`Session: single (never — default)` or `Session: split (always)` / `Session: split (auto — 3 tasks)`; the source is
+`never`, `always`, `auto` (from `SOP_SESSION_SPLIT`) or `user`. Then one line on the PRs:
 `PRs: open on APPROVE · auto-merge risk L, M (user config) · squash · into main · auto cleanup`
 (`manual cleanup` when `auto_cleanup` is false), or
 `PRs: local commits only — <pr.sh preflight reason>` when `pr.sh preflight` failed.
@@ -265,8 +265,8 @@ It records facts only — decisions stay in `plan.md` and the specs.
 }
 ```
 
-- `session`: `single` (phase 2 continued in the phase 1 session) or `split` (fresh session).
-  A resumed session always runs on the `lead_phase2` model, whichever it was.
+- `session`: `single` (phase 2 continued in the phase 1 session, default) or `split` (fresh session).
+  A resumed session always runs on the `worker` model.
 - Stage status: `pending` → `running` → `integrated` (or `deferred`).
 - Task status: `pending` → `dispatched` → `in-review` (with `round`) → `approved` →
   `committed` → `pr-open` → `merged` → `cleaned`, or `deferred` / `escalated`. `open_findings` holds the blocking findings of the
