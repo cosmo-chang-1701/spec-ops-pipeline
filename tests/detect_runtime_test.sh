@@ -45,10 +45,10 @@ gemini_case "gemini 4 argon id" '{
 }' gemini-4 settings gemini-4-argon-high gemini-4-hydrogen-high high
 gemini_case "gemini 4 hydrogen display name" '{
   "model": "Gemini 4 Hydrogen (Medium)"
-}' gemini-4-hydrogen settings gemini-4-hydrogen-high gemini-4-hydrogen-high high
+}' gemini-4-hydrogen settings gemini-4-argon-high gemini-4-hydrogen-high high
 gemini_case "gemini 4 hydrogen id" '{
   "model": "gemini-4-hydrogen-high"
-}' gemini-4-hydrogen settings gemini-4-hydrogen-high gemini-4-hydrogen-high high
+}' gemini-4-hydrogen settings gemini-4-argon-high gemini-4-hydrogen-high high
 gemini_case "claude display name" '{
   "model": "Claude Opus 5.5 (High)"
 }' claude settings claude-opus-5-5-high claude-sonnet-5-5-medium medium
