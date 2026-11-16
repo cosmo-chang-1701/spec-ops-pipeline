@@ -18,7 +18,7 @@
 # SOP_WORKER_LIGHT_MODEL, SOP_WORKER_LIGHT_EFFORT, SOP_SCOUT_MODEL, SOP_SCOUT_EFFORT.
 # Gemini profile: the `model` key of ~/.gemini/antigravity-cli/settings.json (display name or
 # id) picks gemini-3.8-flash (Gemini 3.8 Flash...), claude (Claude...), gemini-4-hydrogen
-# (Gemini 4 Hydrogen...), or gemini-4 (default, also for Gemini 4 Argon... or any unrecognised
+# (Gemini 4 Hydrogen..., same models as gemini-4: lead is Argon; set SOP_LEAD_MODEL=gemini-4-hydrogen-high when Argon is out of quota), or gemini-4 (default, also for Gemini 4 Argon... or any unrecognised
 # model or missing file); reported in detected_by as model:<profile>(settings|default).
 # Session split: SOP_SESSION_SPLIT = never (default: continue in the same session at phase 2),
 # always (fresh session for phase 2), or auto (split with an H-risk task, 3+ tasks, or staged
@@ -108,9 +108,6 @@ case $ecosystem in
       claude)
         lead_model=claude-opus-5-5-high      lead_effort=high
         worker_model=claude-sonnet-5-5-medium worker_effort=medium ;;
-      gemini-4-hydrogen)
-        lead_model=gemini-4-hydrogen-high    lead_effort=high
-        worker_model=gemini-4-hydrogen-high  worker_effort=high ;;
       *)
         lead_model=gemini-4-argon-high       lead_effort=high
         worker_model=gemini-4-hydrogen-high  worker_effort=high ;;

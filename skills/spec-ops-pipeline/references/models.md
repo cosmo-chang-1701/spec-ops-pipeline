@@ -17,9 +17,9 @@ heuristics — e.g. a Claude Code session may also run next to other agents' env
 The Gemini column is the `gemini-4` profile (default). The `model` key of
 `~/.gemini/antigravity-cli/settings.json` (display name or id) selects the Antigravity profile;
 `detected_by` reports `model:<profile>(settings|default)`:
-- `Gemini 4 Hydrogen ...` (`gemini-4-hydrogen`): when `gemini-4-argon-high` is out of quota or
-  unavailable, `lead` falls back to `gemini-4-hydrogen-high` · high (or set
-  `SOP_LEAD_MODEL=gemini-4-hydrogen-high` if Argon fails during a run), while every other role
+- `Gemini 4 Hydrogen ...` (`gemini-4-hydrogen`): `lead` uses `gemini-4-argon-high` · high while Argon has
+  quota; when it is out of quota or unavailable (the script cannot detect this), set
+  `SOP_LEAD_MODEL=gemini-4-hydrogen-high` to fall back to Hydrogen · high. Every other role
   remains `gemini-4-hydrogen-high` · high.
 - `Claude ...` (`claude`): `lead` `claude-opus-5-5-high` · high; every other role
   `claude-sonnet-5-5-medium` · medium.
