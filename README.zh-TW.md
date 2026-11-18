@@ -219,13 +219,13 @@ ln -s ~/src/spec-ops-pipeline/skills/spec-ops-pipeline \
 | 生態系 | 主線程（Orchestrator） | `lead` subagents（Planner、Plan Critic、Reviewer） | `worker` subagents（標準 Worker） | 輕量 Worker | Scout |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | Claude（Claude Code） | `claude-sonnet-5-5` · medium | `claude-opus-5-5` · high | `claude-sonnet-5-5` · medium | `claude-haiku-5-5` · medium | `claude-haiku-5-5` · medium |
-| Gemini 4（Antigravity，預設） | `gemini-4-hydrogen-high` · high | `gemini-4-argon-high` · high | `gemini-4-hydrogen-high` · high | 與 Worker 相同 | 與 Worker 相同 |
-| Gemini 4 Hydrogen（Antigravity） | `gemini-4-hydrogen-high` · high | `gemini-4-argon-high` · high | `gemini-4-hydrogen-high` · high | 與 Worker 相同 | 與 Worker 相同 |
+| Gemini 4（Antigravity，預設） | `gemini-4-hydrogen-high` · high | `gemini-4-neon-high` · high | `gemini-4-hydrogen-high` · high | 與 Worker 相同 | 與 Worker 相同 |
+| Gemini 4 Hydrogen（Antigravity） | `gemini-4-hydrogen-high` · high | `gemini-4-neon-high` · high | `gemini-4-hydrogen-high` · high | 與 Worker 相同 | 與 Worker 相同 |
 | Claude（Antigravity） | `claude-sonnet-5-5-medium` · medium | `claude-opus-5-5-high` · high | `claude-sonnet-5-5-medium` · medium | 與 Worker 相同 | 與 Worker 相同 |
 | Gemini 3.8 Flash（Antigravity） | `gemini-3.8-flash-medium` · medium | `gemini-3.8-flash-high` · high | `gemini-3.8-flash-medium` · medium | 與 Worker 相同 | 與 Worker 相同 |
 | Codex | `gpt-6.1-sol` · medium | `gpt-6-astra` · high | `gpt-6.1-sol` · medium | `gpt-6-luna` · medium | `gpt-6-luna` · medium |
 
-Gemini 的設定檔取決於 Antigravity 目前使用的模型（`~/.gemini/antigravity-cli/settings.json` 中的 `model`）：`Gemini 4 Hydrogen ...` 使用 `gemini-4-hydrogen`（`lead` 在 Argon 有配額時使用 Argon；當 `gemini-4-argon-high` 配額用盡或無法使用時，設定 `SOP_LEAD_MODEL=gemini-4-hydrogen-high` 退回 Hydrogen；其他角色維持 Hydrogen）、`Claude ...` 使用 `claude`、`Gemini 3.8 Flash ...` 使用 `gemini-3.8-flash`，而 `Gemini 4 ...`、其他模型或找不到檔案時使用 `gemini-4`。在 Codex 中，若 `gpt-6-astra` 配額用盡或無法使用，可透過 `SOP_LEAD_MODEL=gpt-6.1-sol` 讓 `lead` subagent 退回 `gpt-6.1-sol` · high。
+Gemini 的設定檔取決於 Antigravity 目前使用的模型（`~/.gemini/antigravity-cli/settings.json` 中的 `model`）：`Gemini 4 Hydrogen ...` 使用 `gemini-4-hydrogen`（`lead` 在 Neon 有配額時使用 Neon；當 `gemini-4-neon-high` 配額用盡或無法使用時，設定 `SOP_LEAD_MODEL=gemini-4-hydrogen-high` 退回 Hydrogen；其他角色維持 Hydrogen）、`Claude ...` 使用 `claude`、`Gemini 3.8 Flash ...` 使用 `gemini-3.8-flash`，而 `Gemini 4 ...`、其他模型或找不到檔案時使用 `gemini-4`。在 Codex 中，若 `gpt-6-astra` 配額用盡或無法使用，可透過 `SOP_LEAD_MODEL=gpt-6.1-sol` 讓 `lead` subagent 退回 `gpt-6.1-sol` · high。
 
 主線程維持在 `worker` 模型，各階段則依職責派出對應模型的 subagent：
 - **Planner**：在 Step 1–2 由 `lead` 模型的唯讀 subagent 進行深度稽核、任務分組，並撰寫執行計畫與 Worker spec（[planner.md](skills/spec-ops-pipeline/references/planner.md)）；主線程負責查驗每處 `file:line` 證據、落盤檔案並執行重疊與 DoD 檢查。

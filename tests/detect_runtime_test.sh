@@ -36,19 +36,19 @@ gemini_case() {
   done
 }
 section "gemini profiles"
-gemini_case "no settings file" "" gemini-4 default gemini-4-argon-high gemini-4-hydrogen-high high
-gemini_case "gemini 4 argon display name" '{
-  "model": "Gemini 4 Argon (Medium)"
-}' gemini-4 settings gemini-4-argon-high gemini-4-hydrogen-high high
-gemini_case "gemini 4 argon id" '{
-  "model": "gemini-4-argon-high"
-}' gemini-4 settings gemini-4-argon-high gemini-4-hydrogen-high high
+gemini_case "no settings file" "" gemini-4 default gemini-4-neon-high gemini-4-hydrogen-high high
+gemini_case "gemini 4 neon display name" '{
+  "model": "Gemini 4 Neon (Medium)"
+}' gemini-4 settings gemini-4-neon-high gemini-4-hydrogen-high high
+gemini_case "gemini 4 neon id" '{
+  "model": "gemini-4-neon-high"
+}' gemini-4 settings gemini-4-neon-high gemini-4-hydrogen-high high
 gemini_case "gemini 4 hydrogen display name" '{
   "model": "Gemini 4 Hydrogen (Medium)"
-}' gemini-4-hydrogen settings gemini-4-argon-high gemini-4-hydrogen-high high
+}' gemini-4-hydrogen settings gemini-4-neon-high gemini-4-hydrogen-high high
 gemini_case "gemini 4 hydrogen id" '{
   "model": "gemini-4-hydrogen-high"
-}' gemini-4-hydrogen settings gemini-4-argon-high gemini-4-hydrogen-high high
+}' gemini-4-hydrogen settings gemini-4-neon-high gemini-4-hydrogen-high high
 gemini_case "claude display name" '{
   "model": "Claude Opus 5.5 (High)"
 }' claude settings claude-opus-5-5-high claude-sonnet-5-5-medium medium
@@ -66,16 +66,16 @@ gemini_case "flash id" '{
 }' gemini-3.8-flash settings gemini-3.8-flash-high gemini-3.8-flash-medium medium
 gemini_case "unrecognised model" '{
   "model": "GPT-OSS 120B (Medium)"
-}' gemini-4 default gemini-4-argon-high gemini-4-hydrogen-high high
+}' gemini-4 default gemini-4-neon-high gemini-4-hydrogen-high high
 gemini_case "top-level model wins over a later nested one" '{
   "model": "Gemini 3.8 Flash (High)",
   "permissions": {
-    "model": "Gemini 4 Argon (High)"
+    "model": "Gemini 4 Neon (High)"
   }
 }' gemini-3.8-flash settings gemini-3.8-flash-high gemini-3.8-flash-medium medium
 gemini_case "no model key" '{
   "colorScheme": "dark"
-}' gemini-4 default gemini-4-argon-high gemini-4-hydrogen-high high
+}' gemini-4 default gemini-4-neon-high gemini-4-hydrogen-high high
 printf '{\n  "model": "Gemini 3.8 Flash (High)"\n}\n' >"$SETTINGS"
 out=$(run SOP_WORKER_MODEL=x)
 check_eq "SOP_WORKER_MODEL beats the profile" "$(json_get '["worker"]["model"]' <<<"$out")" x
